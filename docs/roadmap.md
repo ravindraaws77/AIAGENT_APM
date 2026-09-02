@@ -23,6 +23,8 @@ current one is approved.
 
 **Automated UI test suite + demo data (not a numbered phase, its own PR):** `tests/test_ui_pages.py` drives the actual dashboard pages via NiceGUI's official `user` test fixture (`nicegui.testing.user_plugin`, registered in the root `conftest.py`) — typing into "Ask APM", clicking it, approving/rejecting, checking the orders list — with `httpx.AsyncClient` monkeypatched to an in-process fake API app (fake Gmail/Calendar clients, fake reasoner, fake intent parser), so it runs on every `pytest` invocation with no live credentials, browser, or running server, unlike the one-off manual Playwright check phase 7b was verified with. `scripts/seed_demo_data.py` seeds a real sandbox account with six emails and two calendar events across five categories (three `shipment_delay` orders on purpose, so the category color-coding has a genuine repeat to demonstrate) for demoing the end-to-end flow against real data.
 
+**`reset-demo-data` skill (not a numbered phase, its own PR):** `scripts/reset_demo_data.py` + `.claude/skills/reset-demo-data/SKILL.md` — clears local `state/` (and, opt-in, cached OAuth tokens) so demo runs start from a clean slate, and prints the exact manual cleanup steps for the real Gmail/Calendar seed data (no delete capability exists on the tool connectors — see `docs/capability-map.md` — so that part is deliberately manual, not automated).
+
 ## Beyond phase 7b (not started — future phases, for discussion)
 
 - Voice/avatar layer (LiveKit) — Layers 1–2 of the master architecture
