@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 from apm.config import Settings
 from apm.state.store import StateStore
+from apm.tools._retry import with_retry
 from apm.tools.base import ActionResult, BaseTool, Capability
 
 CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
@@ -161,6 +162,7 @@ class GoogleApiCalendarClient:
         self._service = build("calendar", "v3", credentials=credentials)
         self._calendar_id = calendar_id
 
+    @with_retry()
     def list_events(
         self, time_min: str | None, time_max: str | None, query: str | None, max_results: int
     ) -> list[dict[str, Any]]:
@@ -179,9 +181,13 @@ class GoogleApiCalendarClient:
         response = self._service.events().list(**params).execute()
         return response.get("items", [])
 
+    @with_retry()
     def get_event(self, event_id: str) -> dict[str, Any]:
         return self._service.events().get(calendarId=self._calendar_id, eventId=event_id).execute()
 
+    # Deliberately NOT retried -- see apm.tools._retry's module docstring:
+    # a dropped connection after the server already created the event
+    # must not turn into an automatic duplicate.
     def insert_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._service.events().insert(calendarId=self._calendar_id, body=payload).execute()
 

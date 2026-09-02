@@ -17,6 +17,7 @@ from typing import Any, Protocol
 
 from apm.config import Settings
 from apm.state.store import StateStore
+from apm.tools._retry import with_retry
 from apm.tools.base import ActionResult, BaseTool, Capability
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
@@ -175,6 +176,7 @@ class GoogleApiGmailClient:
 
         self._service = build("gmail", "v1", credentials=credentials)
 
+    @with_retry()
     def list_message_ids(self, query: str, max_results: int) -> list[str]:
         response = (
             self._service.users()
@@ -184,6 +186,7 @@ class GoogleApiGmailClient:
         )
         return [m["id"] for m in response.get("messages", [])]
 
+    @with_retry()
     def get_message(self, message_id: str) -> dict[str, Any]:
         return (
             self._service.users()
@@ -197,6 +200,9 @@ class GoogleApiGmailClient:
             .execute()
         )
 
+    # Deliberately NOT retried -- see the module docstring in
+    # apm.tools._retry: a dropped connection after the server already
+    # sent the email must not turn into an automatic second send.
     def send_message(self, to: str, subject: str, body: str) -> dict[str, Any]:
         import base64
         from email.mime.text import MIMEText

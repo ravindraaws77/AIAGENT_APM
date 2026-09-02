@@ -135,3 +135,39 @@ def test_status_404_for_unknown_process(tmp_path: Path) -> None:
     client, *_ = _client(tmp_path, ReasoningResult(summary="x", proposed_action=None))
     response = client.get("/processes/does-not-exist/status")
     assert response.status_code == 404
+
+
+def test_start_returns_clean_502_on_upstream_failure(tmp_path: Path) -> None:
+    """Reproduces the real scenario: a tool call fails (e.g. a transient
+    network error exhausted its retries) mid-graph. The API must return
+    a clean, readable error instead of an unhandled 500 with a raw
+    Python traceback.
+    """
+
+    class BrokenGmailClient:
+        def list_message_ids(self, query: str, max_results: int):
+            raise ConnectionError("simulated: connection aborted by host")
+
+        def get_message(self, message_id: str):
+            raise ConnectionError("simulated: connection aborted by host")
+
+        def send_message(self, to: str, subject: str, body: str):
+            raise ConnectionError("simulated: connection aborted by host")
+
+    store = StateStore(tmp_path / "state.json")
+    tools = {
+        "gmail": GmailTool(store, BrokenGmailClient()),
+        "google_calendar": CalendarTool(store, FakeCalendarClient([])),
+    }
+    graph = build_graph(
+        tools, FakeReasoner(ReasoningResult(summary="x", proposed_action=None)), store, checkpointer=MemorySaver()
+    )
+    app = create_app()
+    app.dependency_overrides[get_graph] = lambda: graph
+    app.dependency_overrides[get_state_store] = lambda: store
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post("/processes/order-1/start", json={"gmail_query": "order"})
+
+    assert response.status_code == 502
+    assert "connection aborted" in response.json()["detail"].lower()

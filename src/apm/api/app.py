@@ -54,15 +54,31 @@ def create_app() -> FastAPI:
             raise HTTPException(
                 status_code=400, detail="at least one of gmail_query / calendar_query is required"
             )
-        outcome = start_process(graph, process_id, queries)
+        try:
+            outcome = start_process(graph, process_id, queries)
+        except Exception as exc:
+            raise _upstream_error(exc) from exc
         return _to_response(outcome)
 
     @app.post("/processes/{process_id}/decision", response_model=RunOutcomeResponse)
     def decide(process_id: str, body: DecisionRequest, graph=Depends(get_graph)) -> RunOutcomeResponse:
-        outcome = resume_process(graph, process_id, approved=body.approved)
+        try:
+            outcome = resume_process(graph, process_id, approved=body.approved)
+        except Exception as exc:
+            raise _upstream_error(exc) from exc
         return _to_response(outcome)
 
     return app
+
+
+def _upstream_error(exc: Exception) -> HTTPException:
+    """Turn an unexpected failure from the graph/a tool (a network error,
+    an exhausted retry, a reasoner parsing failure, ...) into a clean
+    502 response with a readable message, instead of letting an
+    unhandled 500 with a raw Python traceback reach the caller.
+    Uvicorn still logs the full traceback server-side either way.
+    """
+    return HTTPException(status_code=502, detail=f"Upstream tool/agent error: {exc}")
 
 
 def _to_response(outcome: RunOutcome) -> RunOutcomeResponse:
