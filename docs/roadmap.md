@@ -18,9 +18,12 @@ current one is approved.
 
 **Post-MVP hardening, found by real testing (not separately numbered phases, each its own PR):** a reasoner JSON-parsing crash on a markdown-fenced response; the reasoner fabricating a placeholder recipient when no real one was in the fetched data (now hard-refused at the tool layer, RFC 2606 reserved domains); no retry on a transient network error during a read, and a raw 500 instead of a clean API error; the approval card showing a raw payload dict instead of labeled fields; and — directly serving the "recognise when something has stalled" / "continuous learning from outcomes" goals in the original concept doc — the reasoner now classifies each situation with a stable category slug (e.g. `shipment_delay`), color-coded consistently in both the approval card and the History table, so a recurring pattern across different processes (three orders delayed by the same supplier issue, say) is visually obvious rather than three unrelated-looking approvals.
 
-## Beyond phase 6 (not started — future phases, for discussion)
+| 7a | `claude/apm-07a-intent` | Free-text intent parsing: `ClaudeIntentParser` (`src/apm/agent/intent.py`), same protocol-based pattern as the reasoner, turns a plain-language request ("chase up order 4521", "check the Acme renewal") into a process id + Gmail/Calendar queries. New `POST /query` endpoint runs it straight through the existing graph, reusing known process ids from the state store so a follow-up request continues the same order instead of minting a new one. No UI change yet — the dashboard still uses the phase 6b form/`/start`. | Yes (Anthropic API key) to run for real; fully unit-tested with a fake parser without it |
 
+## Beyond phase 7a (not started — future phases, for discussion)
+
+- **7b** — NiceGUI rework: replace the process-id/Gmail-query/Calendar-query form with a single free-text prompt bar wired to `POST /query`, plus an orders list (from `GET /processes`) and a per-order detail page (`/orders/{process_id}`) instead of today's single flat page
 - Voice/avatar layer (LiveKit) — Layers 1–2 of the master architecture
 - More tools (Jira, ERP/CRM, databases) per the workstream's capability-map pattern
-- Multi-process support (today's MVP assumes one process/case at a time)
+- Cross-process search (one free-text query surfacing multiple matching orders, not just resolving to one)
 - Production-grade persistence (swap the JSON store for Postgres) and real auth/RBAC for the dashboard itself

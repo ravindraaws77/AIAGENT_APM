@@ -18,6 +18,7 @@ from functools import lru_cache
 from langgraph.checkpoint.memory import MemorySaver
 
 from apm.agent.graph import build_graph
+from apm.agent.intent import ClaudeIntentParser
 from apm.agent.reasoner import ClaudeReasoner
 from apm.config import load_settings
 from apm.state.store import StateStore
@@ -37,3 +38,8 @@ def get_graph():
     tools = {"gmail": gmail_tool, "google_calendar": calendar_tool}
     reasoner = ClaudeReasoner(settings)
     return build_graph(tools, reasoner, state, checkpointer=MemorySaver())
+
+
+@lru_cache
+def get_intent_parser():
+    return ClaudeIntentParser(load_settings())

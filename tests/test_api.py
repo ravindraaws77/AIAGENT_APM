@@ -5,14 +5,16 @@ credentials, Anthropic API key, or running server is needed.
 """
 
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import MemorySaver
 
 from apm.agent.graph import build_graph
+from apm.agent.intent import ParsedIntent
 from apm.agent.reasoner import ProposedAction, ReasoningResult
 from apm.api.app import create_app
-from apm.api.dependencies import get_graph, get_state_store
+from apm.api.dependencies import get_graph, get_intent_parser, get_state_store
 from apm.state.store import StateStore
 from apm.tools.calendar_tool import CalendarTool
 from apm.tools.gmail_tool import GmailTool
@@ -21,7 +23,24 @@ from tests.test_calendar_tool import FakeCalendarClient
 from tests.test_gmail_tool import FakeGmailClient
 
 
-def _client(tmp_path: Path, reasoning_result: ReasoningResult):
+class FakeIntentParser:
+    """Returns a pre-set ParsedIntent regardless of input, and records the
+    text/known_process_ids it was called with so tests can assert on what
+    the /query route passed in.
+    """
+
+    def __init__(self, result: ParsedIntent | Exception) -> None:
+        self._result = result
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def parse(self, text: str, known_process_ids: list[str]) -> ParsedIntent:
+        self.calls.append((text, list(known_process_ids)))
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+def _client(tmp_path: Path, reasoning_result: ReasoningResult, intent_parser: Any = None):
     store = StateStore(tmp_path / "state.json")
     gmail_client = FakeGmailClient([])
     calendar_client = FakeCalendarClient([])
@@ -34,6 +53,8 @@ def _client(tmp_path: Path, reasoning_result: ReasoningResult):
     app = create_app()
     app.dependency_overrides[get_graph] = lambda: graph
     app.dependency_overrides[get_state_store] = lambda: store
+    if intent_parser is not None:
+        app.dependency_overrides[get_intent_parser] = lambda: intent_parser
     return TestClient(app), store, gmail_client, calendar_client
 
 
@@ -171,3 +192,51 @@ def test_start_returns_clean_502_on_upstream_failure(tmp_path: Path) -> None:
 
     assert response.status_code == 502
     assert "connection aborted" in response.json()["detail"].lower()
+
+
+def test_query_resolves_intent_and_runs_the_graph(tmp_path: Path) -> None:
+    intent_parser = FakeIntentParser(ParsedIntent(process_id="order-4521", gmail_query="order 4521"))
+    client, store, gmail_client, _ = _client(
+        tmp_path,
+        ReasoningResult(summary="Order 4521 is on track.", proposed_action=None),
+        intent_parser=intent_parser,
+    )
+
+    response = client.post("/query", json={"text": "check on order 4521"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["process_id"] == "order-4521"
+    assert data["summary"] == "Order 4521 is on track."
+    status = store.get_status("order-4521")
+    assert status is not None
+    assert "gmail" in status["fetched"]
+    # The gmail_query the fake intent parser resolved reached the real tool.
+    events = store.list_events("order-4521")
+    assert any(e["event_type"] == "read" and e["details"]["query"] == "order 4521" for e in events)
+
+
+def test_query_passes_known_process_ids_to_the_intent_parser(tmp_path: Path) -> None:
+    intent_parser = FakeIntentParser(ParsedIntent(process_id="order-1", gmail_query="order"))
+    client, *_ = _client(
+        tmp_path, ReasoningResult(summary="x", proposed_action=None), intent_parser=intent_parser
+    )
+    client.post("/processes/order-1/start", json={"gmail_query": "order"})
+
+    client.post("/query", json={"text": "any update on order-1?"})
+
+    text, known_ids = intent_parser.calls[0]
+    assert text == "any update on order-1?"
+    assert "order-1" in known_ids
+
+
+def test_query_returns_clean_502_on_intent_parsing_failure(tmp_path: Path) -> None:
+    intent_parser = FakeIntentParser(RuntimeError("simulated: intent parsing failed"))
+    client, *_ = _client(
+        tmp_path, ReasoningResult(summary="x", proposed_action=None), intent_parser=intent_parser
+    )
+
+    response = client.post("/query", json={"text": "check on order 4521"})
+
+    assert response.status_code == 502
+    assert "intent parsing failed" in response.json()["detail"].lower()

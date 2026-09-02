@@ -147,7 +147,7 @@ def parse_reasoning_response(text: str) -> ReasoningResult:
     Claude call) that it's cheaper to strip defensively than to rely on
     prompting alone.
     """
-    data = json.loads(_strip_code_fence(text.strip()))
+    data = json.loads(strip_code_fence(text.strip()))
     action_data = data.get("proposed_action")
     proposed_action = (
         ProposedAction(
@@ -163,9 +163,11 @@ def parse_reasoning_response(text: str) -> ReasoningResult:
     return ReasoningResult(summary=data["summary"], proposed_action=proposed_action, category=category)
 
 
-def _strip_code_fence(text: str) -> str:
+def strip_code_fence(text: str) -> str:
     """Remove a wrapping ```json / ``` fence, if present. Leaves
-    unfenced text untouched.
+    unfenced text untouched. Public (not just for this module) since
+    apm.agent.intent's ClaudeIntentParser hits the same markdown-fence
+    habit from Claude and reuses this rather than duplicating it.
     """
     if not text.startswith("```"):
         return text
