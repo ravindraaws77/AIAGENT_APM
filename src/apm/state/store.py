@@ -136,14 +136,27 @@ class StateStore:
     # writes to it via `interrupt()` and reads the resolution back.
 
     def add_pending_action(
-        self, process_id: str, tool: str, description: str, payload: dict[str, Any]
+        self,
+        process_id: str,
+        tool: str,
+        description: str,
+        payload: dict[str, Any],
+        category: str = "other",
     ) -> dict[str, Any]:
+        """`category` is a short, stable slug (e.g. "shipment_delay") from
+        the reasoner's classification of the underlying situation — see
+        apm.agent.reasoner.SYSTEM_PROMPT. Carried on the action record and
+        included in every audit event logged for it, so the UI's History
+        table can color-code by category to surface recurring patterns
+        across processes, not just within one.
+        """
         action = {
             "id": str(uuid.uuid4()),
             "process_id": process_id,
             "tool": tool,
             "description": description,
             "payload": payload,
+            "category": category,
             "status": "pending",
             "created_at": _now(),
         }
@@ -151,7 +164,7 @@ class StateStore:
             data = self._read()
             data.setdefault("pending_actions", []).append(action)
             self._write(data)
-        self.log_event(process_id, tool, "action_proposed", description, payload)
+        self.log_event(process_id, tool, "action_proposed", description, {"category": category, **payload})
         return action
 
     def list_pending_actions(self, process_id: str | None = None) -> list[dict[str, Any]]:
@@ -179,6 +192,6 @@ class StateStore:
             action["tool"],
             "action_approved" if approved else "action_rejected",
             action["description"],
-            action["payload"],
+            {"category": action.get("category", "other"), **action["payload"]},
         )
         return action

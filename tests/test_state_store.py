@@ -77,3 +77,39 @@ def test_pending_action_rejection(tmp_path: Path) -> None:
 def test_resolve_unknown_action_returns_none(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.json")
     assert store.resolve_pending_action("does-not-exist", approved=True) is None
+
+
+def test_pending_action_category_defaults_to_other(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+
+    action = store.add_pending_action(
+        process_id="order-1", tool="gmail", description="x", payload={}
+    )
+
+    assert action["category"] == "other"
+
+
+def test_pending_action_category_is_stored_and_logged(tmp_path: Path) -> None:
+    """Category flows through to both the pending-action record and every
+    audit event logged for it (proposed and, here, approved) -- this is
+    what lets the History table color-code by category to surface a
+    recurring pattern across processes.
+    """
+    store = StateStore(tmp_path / "state.json")
+
+    action = store.add_pending_action(
+        process_id="order-1",
+        tool="gmail",
+        description="Send a follow-up email about the delayed shipment",
+        payload={"to": "customer@realcorp.io"},
+        category="shipment_delay",
+    )
+    assert action["category"] == "shipment_delay"
+
+    store.resolve_pending_action(action["id"], approved=True)
+
+    events = store.list_events(process_id="order-1")
+    proposed_event = next(e for e in events if e["event_type"] == "action_proposed")
+    approved_event = next(e for e in events if e["event_type"] == "action_approved")
+    assert proposed_event["details"]["category"] == "shipment_delay"
+    assert approved_event["details"]["category"] == "shipment_delay"

@@ -1,4 +1,12 @@
-from apm.ui.logic import build_start_request, format_action_details, format_pending_action, format_result
+from apm.ui.logic import (
+    build_start_request,
+    category_color,
+    format_action_details,
+    format_category_label,
+    format_pending_action,
+    format_result,
+    prepare_history_rows,
+)
 
 
 def test_build_start_request_both_queries() -> None:
@@ -114,3 +122,65 @@ def test_format_action_details_unknown_method_falls_back_to_raw_payload() -> Non
     action = {"tool": "mystery", "method": "do_something_new", "payload": {"foo": "bar"}}
 
     assert format_action_details(action) == [("foo", "bar")]
+
+
+def test_category_color_curated_categories_are_stable() -> None:
+    assert category_color("shipment_delay") == "red"
+    assert category_color("renewal_reminder") == "blue"
+    assert category_color("other") == "grey"
+
+
+def test_category_color_unknown_category_is_deterministic() -> None:
+    """The exact color for a novel category doesn't matter, but it must
+    be the SAME color every call (and, implicitly, every app restart --
+    this is why the implementation avoids Python's salted hash())."""
+    first = category_color("some_new_thing_the_model_invented")
+    second = category_color("some_new_thing_the_model_invented")
+    assert first == second
+
+
+def test_category_color_different_unknown_categories_can_differ() -> None:
+    colors = {category_color(f"category_{i}") for i in range(6)}
+    assert len(colors) > 1  # not every unknown category collides onto the same color
+
+
+def test_format_category_label() -> None:
+    assert format_category_label("shipment_delay") == "Shipment Delay"
+    assert format_category_label("other") == "Other"
+
+
+def test_prepare_history_rows_flattens_category_from_details() -> None:
+    rows = [
+        {
+            "id": "e1",
+            "timestamp": "2026-09-10T00:00:00Z",
+            "tool": "gmail",
+            "event_type": "action_proposed",
+            "summary": "Proposed a follow-up",
+            "details": {"category": "shipment_delay", "to": "c@realcorp.io"},
+        }
+    ]
+
+    prepared = prepare_history_rows(rows)
+
+    assert prepared[0]["category"] == "Shipment Delay"
+    assert prepared[0]["category_color"] == "red"
+    assert prepared[0]["id"] == "e1"  # original fields preserved
+
+
+def test_prepare_history_rows_handles_missing_category() -> None:
+    rows = [
+        {
+            "id": "e2",
+            "timestamp": "2026-09-10T00:00:00Z",
+            "tool": "gmail",
+            "event_type": "read",
+            "summary": "Searched Gmail",
+            "details": {"query": "order"},
+        }
+    ]
+
+    prepared = prepare_history_rows(rows)
+
+    assert prepared[0]["category"] == ""
+    assert prepared[0]["category_color"] == ""

@@ -136,6 +136,25 @@ def test_rejection_does_not_execute_the_action(tmp_path: Path) -> None:
     assert not any(e["event_type"] == "action_executed" for e in events)
 
 
+def test_category_flows_through_to_pending_action_and_status(tmp_path: Path) -> None:
+    proposed = ProposedAction(
+        tool="gmail",
+        method="send_email",
+        description="Send a follow-up email about the delay",
+        payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
+    )
+    graph, store, _, _ = _build(
+        tmp_path,
+        ReasoningResult(summary="There is a delay.", proposed_action=proposed, category="shipment_delay"),
+    )
+
+    outcome = start_process(graph, "order-1", queries={})
+
+    assert outcome.pending_action["category"] == "shipment_delay"
+    assert store.get_status("order-1")["category"] == "shipment_delay"
+    assert store.list_pending_actions("order-1")[0]["category"] == "shipment_delay"
+
+
 def test_fetch_node_calls_configured_tools_and_persists_status(tmp_path: Path) -> None:
     from tests.test_gmail_tool import _raw_message
 

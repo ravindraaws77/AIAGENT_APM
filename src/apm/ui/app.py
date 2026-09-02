@@ -22,9 +22,12 @@ from nicegui import ui
 from apm.ui.logic import (
     HISTORY_COLUMNS,
     build_start_request,
+    category_color,
     format_action_details,
+    format_category_label,
     format_pending_action,
     format_result,
+    prepare_history_rows,
 )
 
 try:
@@ -81,7 +84,10 @@ async def index() -> None:
             return
         action = state.pending_action
         with ui.card().classes("border-2 border-amber-400 mt-2"):
-            ui.label("Approval needed").classes("font-bold text-amber-700")
+            with ui.row().classes("items-center gap-2"):
+                ui.label("Approval needed").classes("font-bold text-amber-700")
+                category = action.get("category") or "other"
+                ui.badge(format_category_label(category), color=category_color(category))
             ui.label(format_pending_action(action))
             with ui.column().classes("gap-1 w-full mt-1"):
                 for label, value in format_action_details(action):
@@ -101,7 +107,19 @@ async def index() -> None:
 
     @ui.refreshable
     def history_panel(rows: list[dict] | None = None) -> None:
-        ui.table(columns=HISTORY_COLUMNS, rows=rows or []).classes("w-full")
+        table = ui.table(columns=HISTORY_COLUMNS, rows=rows or []).classes("w-full")
+        # Renders the category column as a colored badge (category_color,
+        # set by prepare_history_rows) instead of plain text, so a
+        # recurring issue type is visually obvious scanning down the
+        # table -- the whole point of color-coding by category.
+        table.add_slot(
+            "body-cell-category",
+            r"""
+            <q-td :props="props">
+                <q-badge v-if="props.value" :color="props.row.category_color">{{ props.value }}</q-badge>
+            </q-td>
+            """,
+        )
 
     pending_action_panel()
     result_panel()
@@ -113,7 +131,7 @@ async def index() -> None:
         async with httpx.AsyncClient(base_url=API_BASE_URL, timeout=30) as client:
             response = await client.get(f"/processes/{state.process_id}/history")
             response.raise_for_status()
-            history_panel.refresh(rows=response.json())
+            history_panel.refresh(rows=prepare_history_rows(response.json()))
 
     async def handle_start() -> None:
         state.process_id = process_id_input.value.strip()

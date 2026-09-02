@@ -37,6 +37,7 @@ class GraphState(TypedDict, total=False):
     queries: dict[str, dict[str, Any]]
     fetched: dict[str, Any]
     summary: str
+    category: str
     proposed_action: dict[str, Any] | None
     pending_action_id: str | None
     decision: bool | None
@@ -107,8 +108,8 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
             if result.proposed_action
             else None
         )
-        state_store.set_status(process_id, stage="summarized", summary=result.summary)
-        return {"summary": result.summary, "proposed_action": proposed}
+        state_store.set_status(process_id, stage="summarized", summary=result.summary, category=result.category)
+        return {"summary": result.summary, "category": result.category, "proposed_action": proposed}
 
     def propose_node(state: GraphState) -> dict[str, Any]:
         """Records the pending action, if any, exactly once. Deliberately
@@ -126,6 +127,7 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
             tool=proposed["tool"],
             description=proposed["description"],
             payload=proposed,
+            category=state.get("category", "other"),
         )
         return {"pending_action_id": action_record["id"]}
 
@@ -153,6 +155,7 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
                 "method": proposed["method"],
                 "description": proposed["description"],
                 "payload": proposed["payload"],
+                "category": state.get("category", "other"),
             }
         )
         approved = bool(decision.get("approved")) if isinstance(decision, dict) else bool(decision)
