@@ -1,6 +1,6 @@
 ---
 name: reset-demo-data
-description: Use when the user wants to reset, clean up, or start over with the APM demo environment — clearing local process/history state, optionally cached OAuth tokens, and the Gmail/Calendar data scripts/seed_demo_data.py created. Invoke before re-running a demo from a clean slate, or when stale orders/approvals from earlier testing are cluttering the dashboard.
+description: Use when the user wants to reset, clean up, or start over with the APM demo environment — clearing local process/history state, and separately (manually) the Gmail/Calendar data scripts/seed_demo_data.py created. Invoke before re-running a demo from a clean slate, or when stale orders/approvals from earlier testing are cluttering the dashboard.
 ---
 
 # Resetting the APM demo environment
@@ -15,9 +15,11 @@ that something.
 
 | What | Where it lives | Cleared by |
 |---|---|---|
-| Process status, history, pending approvals | `state/` (local JSON, gitignored) | `scripts/reset_demo_data.py` (automatic) |
-| Cached OAuth tokens | `.google_token.json`, `.ms_graph_token_cache.json` | `scripts/reset_demo_data.py --tokens` (opt-in — only if you want to force fresh sign-in) |
-| Seeded Gmail messages / Calendar events | The real sandbox Google account | **Manual** — no delete capability is built into the tool connectors (see `docs/capability-map.md`); this is a deliberate scope limit, not an oversight |
+| Process status, history, pending approvals | `state/` (local JSON, gitignored) | `scripts/reset_demo_data.py` — **the only thing this script does** |
+| Cached OAuth tokens | `.google_token.json`, `.ms_graph_token_cache.json` | Manual, optional (see below) — not touched by the script |
+| Seeded Gmail messages / Calendar events | The real sandbox Google account | Manual (see below) — not touched by the script |
+
+`scripts/reset_demo_data.py` never imports `apm.tools.gmail_tool`, `apm.tools.calendar_tool`, or `apm.tools.google_auth`, never calls the Gmail or Calendar API, and never touches OAuth tokens. Its only side effect is `shutil.rmtree` on the local `state/` directory. Treat this as the property to preserve if this script is ever changed — its whole value is that it's safe to run without a second thought.
 
 ## Steps
 
@@ -27,16 +29,18 @@ that something.
    ```
    python scripts/reset_demo_data.py
    ```
-   It asks for confirmation that the servers are stopped, then deletes `state/`. Options:
-   - `--tokens` — also clear cached OAuth tokens (only needed to force a fresh Google/Microsoft sign-in, e.g. switching accounts)
-   - `--reseed <contact-email>` — immediately re-run `scripts/seed_demo_data.py` afterward with the given contact email
-   - `--yes` — skip the confirmation prompt (only if you've already confirmed the servers are stopped yourself)
+   It asks for confirmation that the servers are stopped, then deletes `state/`. Pass `--yes` to skip the confirmation prompt (only if you've already confirmed the servers are stopped yourself).
 
-3. **Manually clean up the real Gmail/Calendar seed data** — the script prints the exact search query and event titles to remove:
+3. **(Optional, separate, manual) Clean up the real Gmail/Calendar seed data** — the script prints the search query and event titles as a reference, but does not act on them:
    - Gmail: search `subject:("Order #401" OR "Order #402" OR "Order #403" OR "Order #404" OR "Order #405" OR "Order #406")`, select all, delete. Also search for any order numbers used in ad hoc manual testing, and any "Mail Delivery Subsystem" bounce notifications.
    - Calendar: delete "Renewal call - Acme Corp" and "Contract review - Globex" (and anything else approved into the calendar during testing).
 
-4. **Restart the API and UI**, and re-seed if you skipped `--reseed` in step 2:
+4. **(Optional, separate, manual) Force a fresh OAuth sign-in**, e.g. to switch accounts — only if you actually want this, it's not part of a normal reset:
+   ```
+   rm -f .google_token.json .ms_graph_token_cache.json
+   ```
+
+5. **Restart the API and UI**, and re-seed if you want fresh demo data:
    ```
    uvicorn apm.api.app:app --reload --port 8000
    python -m apm.ui.app
