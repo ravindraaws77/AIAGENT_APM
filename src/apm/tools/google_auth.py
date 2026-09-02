@@ -28,6 +28,16 @@ def load_credentials(
 
     `token_path` is a local, gitignored file (see .gitignore's
     `*token*.json` pattern) — never commit it, it grants account access.
+
+    Note on combining Gmail + Calendar: a cached token is only valid for
+    the scopes it was originally consented to. If you call this with the
+    Gmail scope alone and later with the Calendar scope alone, you'll get
+    two separate consent prompts writing to the same token_path, and the
+    second overwrites the first — the earlier tool then fails at request
+    time with an insufficient-scope error, not at token-load time. When
+    phase 5 wires up both tools together, request both scopes in one
+    call (e.g. `load_credentials(settings, [GMAIL_READONLY_SCOPE, CALENDAR_READONLY_SCOPE])`)
+    so one consent covers both, or use separate token_path values per tool.
     """
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
