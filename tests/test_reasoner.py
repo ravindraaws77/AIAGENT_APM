@@ -30,3 +30,26 @@ def test_parse_response_with_proposed_action() -> None:
     assert result.proposed_action.tool == "gmail"
     assert result.proposed_action.method == "send_email"
     assert result.proposed_action.payload["to"] == "customer@example.com"
+
+
+def test_parse_response_wrapped_in_markdown_code_fence() -> None:
+    """Reproduces a real response observed from the live Anthropic API:
+    despite SYSTEM_PROMPT saying "respond with ONLY a JSON object", the
+    model wrapped it in a ```json fence anyway.
+    """
+    text = """```json
+    {"summary": "All good.", "proposed_action": null}
+    ```"""
+
+    result = parse_reasoning_response(text)
+
+    assert result.summary == "All good."
+    assert result.proposed_action is None
+
+
+def test_parse_response_wrapped_in_plain_code_fence() -> None:
+    text = "```\n{\"summary\": \"All good.\", \"proposed_action\": null}\n```"
+
+    result = parse_reasoning_response(text)
+
+    assert result.summary == "All good."

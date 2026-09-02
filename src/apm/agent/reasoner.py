@@ -89,7 +89,7 @@ class ClaudeReasoner:
         client = anthropic.Anthropic(api_key=self._settings.anthropic_api_key)
         response = client.messages.create(
             model=self._model,
-            max_tokens=1024,
+            max_tokens=2048,
             system=SYSTEM_PROMPT,
             messages=[
                 {
@@ -102,6 +102,13 @@ class ClaudeReasoner:
             ],
         )
         text = "".join(block.text for block in response.content if block.type == "text")
+        if not text.strip():
+            block_types = [block.type for block in response.content]
+            raise RuntimeError(
+                "Claude returned no text content to parse "
+                f"(stop_reason={response.stop_reason!r}, content block types={block_types!r}). "
+                "This can happen if max_tokens is too small for the model to finish responding."
+            )
         return parse_reasoning_response(text)
 
 
@@ -109,8 +116,14 @@ def parse_reasoning_response(text: str) -> ReasoningResult:
     """Parse the JSON contract described in SYSTEM_PROMPT. Split out from
     ClaudeReasoner so it's independently testable against hand-written
     sample responses without any API call.
+
+    Tolerates the model wrapping its answer in a markdown code fence
+    (```json ... ``` or ``` ... ```) despite SYSTEM_PROMPT telling it not
+    to — a common enough LLM habit in practice (confirmed against a real
+    Claude call) that it's cheaper to strip defensively than to rely on
+    prompting alone.
     """
-    data = json.loads(text)
+    data = json.loads(_strip_code_fence(text.strip()))
     action_data = data.get("proposed_action")
     proposed_action = (
         ProposedAction(
@@ -123,3 +136,16 @@ def parse_reasoning_response(text: str) -> ReasoningResult:
         else None
     )
     return ReasoningResult(summary=data["summary"], proposed_action=proposed_action)
+
+
+def _strip_code_fence(text: str) -> str:
+    """Remove a wrapping ```json / ``` fence, if present. Leaves
+    unfenced text untouched.
+    """
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()
+    lines = lines[1:]  # drop the opening ``` or ```json line
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines)
