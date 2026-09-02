@@ -1,26 +1,27 @@
 from apm.ui.logic import (
-    build_start_request,
+    build_query_request,
     category_color,
     format_action_details,
     format_category_label,
     format_pending_action,
     format_result,
+    normalize_pending_action,
+    order_status,
     prepare_history_rows,
+    prepare_order_rows,
 )
 
 
-def test_build_start_request_both_queries() -> None:
-    body = build_start_request("newer_than:30d", "renewal")
-    assert body == {"gmail_query": "newer_than:30d", "calendar_query": "renewal"}
+def test_build_query_request_returns_body() -> None:
+    assert build_query_request("chase up order 4521") == {"text": "chase up order 4521"}
 
 
-def test_build_start_request_trims_whitespace() -> None:
-    body = build_start_request("  newer_than:30d  ", "  ")
-    assert body == {"gmail_query": "newer_than:30d"}
+def test_build_query_request_trims_whitespace() -> None:
+    assert build_query_request("  check the Acme renewal  ") == {"text": "check the Acme renewal"}
 
 
-def test_build_start_request_empty_when_both_blank() -> None:
-    assert build_start_request("", "   ") == {}
+def test_build_query_request_none_when_blank() -> None:
+    assert build_query_request("   ") is None
 
 
 def test_format_pending_action() -> None:
@@ -184,3 +185,106 @@ def test_prepare_history_rows_handles_missing_category() -> None:
 
     assert prepared[0]["category"] == ""
     assert prepared[0]["category_color"] == ""
+
+
+def test_order_status_summarized_is_needs_approval() -> None:
+    assert order_status({"stage": "summarized"}) == ("Needs approval", "amber")
+
+
+def test_order_status_done_and_executed() -> None:
+    process = {"stage": "done", "result": {"executed": True, "description": "Sent"}}
+    assert order_status(process) == ("Done", "green")
+
+
+def test_order_status_done_and_rejected() -> None:
+    process = {"stage": "done", "result": {"executed": False, "reason": "rejected"}}
+    assert order_status(process) == ("Rejected", "red")
+
+
+def test_order_status_done_no_action_needed() -> None:
+    process = {"stage": "done", "result": {"executed": False, "reason": "no_action_proposed"}}
+    assert order_status(process) == ("No action needed", "grey")
+
+
+def test_order_status_in_progress_for_earlier_stages() -> None:
+    assert order_status({"stage": "fetched"}) == ("In progress", "blue")
+    assert order_status({}) == ("In progress", "blue")
+
+
+def test_prepare_order_rows_builds_display_fields() -> None:
+    processes = [
+        {
+            "process_id": "order-4521",
+            "stage": "summarized",
+            "category": "shipment_delay",
+            "summary": "Shipment is delayed.",
+            "updated_at": "2026-09-10T00:00:00Z",
+        }
+    ]
+
+    rows = prepare_order_rows(processes)
+
+    assert rows == [
+        {
+            "process_id": "order-4521",
+            "category": "Shipment Delay",
+            "category_color": "red",
+            "status_label": "Needs approval",
+            "status_color": "amber",
+            "summary": "Shipment is delayed.",
+            "updated_at": "2026-09-10T00:00:00Z",
+        }
+    ]
+
+
+def test_prepare_order_rows_handles_missing_category_and_summary() -> None:
+    processes = [{"process_id": "order-1", "stage": "fetched", "updated_at": "2026-09-10T00:00:00Z"}]
+
+    rows = prepare_order_rows(processes)
+
+    assert rows[0]["category"] == ""
+    assert rows[0]["category_color"] == ""
+    assert rows[0]["summary"] == ""
+
+
+def test_prepare_order_rows_sorts_most_recently_updated_first() -> None:
+    processes = [
+        {"process_id": "older", "stage": "done", "updated_at": "2026-09-01T00:00:00Z"},
+        {"process_id": "newer", "stage": "done", "updated_at": "2026-09-10T00:00:00Z"},
+    ]
+
+    rows = prepare_order_rows(processes)
+
+    assert [row["process_id"] for row in rows] == ["newer", "older"]
+
+
+def test_normalize_pending_action_flattens_nested_payload() -> None:
+    """apm.state.store.StateStore.add_pending_action stores the *entire*
+    proposed-action dict (tool/method/description/payload) under the
+    record's own "payload" key -- reproduces that exact shape, as
+    returned by GET /processes/{id}/pending.
+    """
+    record = {
+        "id": "action-1",
+        "process_id": "order-1",
+        "tool": "gmail",
+        "description": "Send a follow-up email about the delay",
+        "payload": {
+            "tool": "gmail",
+            "method": "send_email",
+            "description": "Send a follow-up email about the delay",
+            "payload": {"to": "c@realcorp.io", "subject": "Update", "body": "Sorry for the delay."},
+        },
+        "category": "shipment_delay",
+        "status": "pending",
+    }
+
+    action = normalize_pending_action(record)
+
+    assert action == {
+        "tool": "gmail",
+        "method": "send_email",
+        "description": "Send a follow-up email about the delay",
+        "payload": {"to": "c@realcorp.io", "subject": "Update", "body": "Sorry for the delay."},
+        "category": "shipment_delay",
+    }
