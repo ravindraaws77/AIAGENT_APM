@@ -7,6 +7,10 @@ google-api-python-client>=2.100
 google-auth-httplib2>=0.2
 google-auth-oauthlib>=1.2
 
-# Remaining tool-specific and agent/UI dependencies (msgraph-sdk,
-# langgraph, langchain-anthropic, streamlit, ...) are added in each
-# later phase's own PR — see docs/roadmap.md.
+# Phase 4: MS Excel via Microsoft Graph.
+msal>=1.28
+requests>=2.31
+
+# Remaining agent/UI dependencies (langgraph, langchain-anthropic,
+# streamlit, ...) are added in each later phase's own PR — see
+# docs/roadmap.md.
