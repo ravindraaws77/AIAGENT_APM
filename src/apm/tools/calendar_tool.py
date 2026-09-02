@@ -1,8 +1,9 @@
-"""Google Calendar connector — read/search only for this phase.
+"""Google Calendar connector.
 
-Same read-first pattern as gmail_tool.py: create/update events is
-documented as a future capability in docs/capability-map.md, deferred to
-phase 5 where the LangGraph human-approval interrupt exists to gate it.
+Read (list/search events) has been available since phase 3. This phase
+(5) adds create_event — the write/action capability deferred until now,
+same reasoning as Gmail's send_email: only ever called with dry_run=False
+from inside the agent graph's execute_node, after an approved interrupt.
 """
 
 from __future__ import annotations
@@ -12,9 +13,10 @@ from typing import Any, Protocol
 
 from apm.config import Settings
 from apm.state.store import StateStore
-from apm.tools.base import BaseTool, Capability
+from apm.tools.base import ActionResult, BaseTool, Capability
 
 CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 
 
 class CalendarClient(Protocol):
@@ -29,6 +31,8 @@ class CalendarClient(Protocol):
 
     def get_event(self, event_id: str) -> dict[str, Any]: ...
 
+    def insert_event(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True)
 class EventSummary:
@@ -41,12 +45,13 @@ class EventSummary:
 
 
 class CalendarTool(BaseTool):
-    """Read-only Google Calendar connector: list/search events and read
-    a single event's details.
+    """Google Calendar connector: list/search/read events, and create an
+    event — the latter only ever reachable through the agent's approval
+    interrupt (see apm.agent.graph).
     """
 
     name = "google_calendar"
-    capabilities = frozenset({Capability.READ})
+    capabilities = frozenset({Capability.READ, Capability.ACTION})
 
     def __init__(self, state: StateStore, client: CalendarClient) -> None:
         super().__init__(state)
@@ -91,6 +96,43 @@ class CalendarTool(BaseTool):
             {"event_id": event_id},
         )
         return summary
+
+    def create_event(
+        self,
+        process_id: str,
+        title: str,
+        start: str,
+        end: str,
+        attendees: list[str] | None = None,
+        location: str | None = None,
+        dry_run: bool = True,
+    ) -> ActionResult:
+        """Create a single (non-recurring) event. `start`/`end` are
+        RFC3339 datetimes (e.g. "2026-09-10T15:00:00Z"). Only ever call
+        this with dry_run=False from inside the agent graph, after the
+        human-approval interrupt has returned an approval.
+        """
+        summary = f"Create Calendar event '{title}' at {start}"
+        self.require_dry_run_guard(dry_run, process_id, summary)
+
+        payload = {
+            "summary": title,
+            "start": {"dateTime": start},
+            "end": {"dateTime": end},
+            "attendees": [{"email": a} for a in (attendees or [])],
+        }
+        if location:
+            payload["location"] = location
+
+        if dry_run:
+            return ActionResult(executed=False, description=summary, details=payload)
+
+        created = self._client.insert_event(payload)
+        return ActionResult(
+            executed=True,
+            description=summary,
+            details={**payload, "event_id": created.get("id")},
+        )
 
     @staticmethod
     def _to_summary(raw: dict[str, Any]) -> EventSummary:
@@ -140,6 +182,9 @@ class GoogleApiCalendarClient:
     def get_event(self, event_id: str) -> dict[str, Any]:
         return self._service.events().get(calendarId=self._calendar_id, eventId=event_id).execute()
 
+    def insert_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._service.events().insert(calendarId=self._calendar_id, body=payload).execute()
+
 
 def build_calendar_tool(state: StateStore, settings: Settings) -> CalendarTool:
     """Convenience factory: runs the OAuth flow (if needed) and returns a
@@ -149,5 +194,5 @@ def build_calendar_tool(state: StateStore, settings: Settings) -> CalendarTool:
     """
     from apm.tools.google_auth import load_credentials
 
-    credentials = load_credentials(settings, scopes=[CALENDAR_READONLY_SCOPE])
+    credentials = load_credentials(settings, scopes=[CALENDAR_READONLY_SCOPE, CALENDAR_EVENTS_SCOPE])
     return CalendarTool(state, GoogleApiCalendarClient(credentials))

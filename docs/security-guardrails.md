@@ -35,10 +35,12 @@ capability can run whenever the agent needs it. A tool's `write` or
 `action` capability can **only** run after an explicit human decision
 (Approve, via the UI). There is no code path in phases 2–6 that sends an
 email, creates a calendar event, or writes a spreadsheet row without that
-step. This mirrors the LangGraph `interrupt()` pattern used in phase 5:
-the graph physically pauses and persists state at that point — it isn't a
-soft "best effort" check, execution cannot continue without a resume
-signal.
+step. This is implemented, not aspirational: `src/apm/agent/graph.py`'s
+`execute_node` is the only place any tool's write/action method is ever
+called with `dry_run=False`, and it only runs after `approval_node`'s
+`interrupt()` has returned an approved decision — the graph physically
+pauses and checkpoints state at that point, it isn't a soft "best effort"
+check, execution cannot continue without a `Command(resume=...)` signal.
 
 Every connector also supports a `dry_run` mode: report exactly what a
 write/action call *would* do without doing it, used for local testing

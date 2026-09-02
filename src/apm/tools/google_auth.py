@@ -11,8 +11,14 @@ dependencies installed.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from apm.config import Settings
+from apm.state.store import StateStore
+
+if TYPE_CHECKING:
+    from apm.tools.calendar_tool import CalendarTool
+    from apm.tools.gmail_tool import GmailTool
 
 DEFAULT_TOKEN_PATH = Path(".google_token.json")
 
@@ -30,14 +36,13 @@ def load_credentials(
     `*token*.json` pattern) — never commit it, it grants account access.
 
     Note on combining Gmail + Calendar: a cached token is only valid for
-    the scopes it was originally consented to. If you call this with the
-    Gmail scope alone and later with the Calendar scope alone, you'll get
-    two separate consent prompts writing to the same token_path, and the
-    second overwrites the first — the earlier tool then fails at request
-    time with an insufficient-scope error, not at token-load time. When
-    phase 5 wires up both tools together, request both scopes in one
-    call (e.g. `load_credentials(settings, [GMAIL_READONLY_SCOPE, CALENDAR_READONLY_SCOPE])`)
-    so one consent covers both, or use separate token_path values per tool.
+    the scopes it was originally consented to. Calling this with the
+    Gmail scopes alone and later the Calendar scopes alone produces two
+    separate consent prompts against the same token_path, and the second
+    overwrites the first — the earlier tool then fails at request time
+    with an insufficient-scope error, not at token-load time. Use
+    `build_gmail_and_calendar_tools` (below) when you need both tools —
+    it requests every scope in one call so one consent covers both.
     """
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -71,3 +76,29 @@ def load_credentials(
         token_path.write_text(creds.to_json())
 
     return creds
+
+
+def build_gmail_and_calendar_tools(
+    state: StateStore, settings: Settings, token_path: Path = DEFAULT_TOKEN_PATH
+) -> tuple["GmailTool", "CalendarTool"]:
+    """Build both Google tools from a single OAuth consent covering both
+    tools' scopes at once — this is the fix for the token-cache overwrite
+    issue noted above: build_gmail_tool() and build_calendar_tool() each
+    request only their own scopes, so calling them separately against the
+    same token_path re-prompts for consent and each overwrites the
+    other's cached token. The agent (apm.agent.graph) uses this function
+    instead of the two single-tool factories whenever it needs both.
+    """
+    from apm.tools.calendar_tool import (
+        CALENDAR_EVENTS_SCOPE,
+        CALENDAR_READONLY_SCOPE,
+        CalendarTool,
+        GoogleApiCalendarClient,
+    )
+    from apm.tools.gmail_tool import GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE, GmailTool, GoogleApiGmailClient
+
+    scopes = [GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE, CALENDAR_READONLY_SCOPE, CALENDAR_EVENTS_SCOPE]
+    credentials = load_credentials(settings, scopes=scopes, token_path=token_path)
+    gmail_tool = GmailTool(state, GoogleApiGmailClient(credentials))
+    calendar_tool = CalendarTool(state, GoogleApiCalendarClient(credentials))
+    return gmail_tool, calendar_tool
