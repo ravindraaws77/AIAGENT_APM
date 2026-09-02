@@ -8,6 +8,15 @@ def test_parse_response_with_no_action() -> None:
 
     assert result.summary == "All good."
     assert result.proposed_action is None
+    assert result.category == "other"  # not present in the response -- defaults
+
+
+def test_parse_response_with_category() -> None:
+    text = '{"summary": "Order delayed.", "category": "shipment_delay", "proposed_action": null}'
+
+    result = parse_reasoning_response(text)
+
+    assert result.category == "shipment_delay"
 
 
 def test_parse_response_with_proposed_action() -> None:

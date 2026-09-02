@@ -30,6 +30,7 @@ class ProposedAction:
 class ReasoningResult:
     summary: str
     proposed_action: ProposedAction | None
+    category: str = "other"
 
 
 class Reasoner(Protocol):
@@ -62,10 +63,23 @@ seems warranted, but no customer email address was found in the fetched \
 data") so a person knows what's missing rather than being shown a \
 fabricated placeholder.
 
+Also classify the underlying situation with a short, stable, snake_case \
+category slug — this is what lets a person spot a recurring pattern \
+across different processes (e.g. three separate orders all delayed by \
+the same supplier issue) and address the root cause, instead of \
+handling each case as if it were unrelated. Reuse the exact same slug \
+for the same kind of situation every time; do not invent a new wording \
+for something you've already categorized before. Prefer one of these \
+when it genuinely fits: "shipment_delay", "renewal_reminder", \
+"missing_information", "customer_inquiry", "payment_issue". Use "other" \
+only when none of those — or an equally short, clear slug of your own — \
+actually describes it.
+
 Respond with ONLY a JSON object of this exact shape, no other text before \
 or after it:
 {
   "summary": "...",
+  "category": "shipment_delay" | "renewal_reminder" | "missing_information" | "customer_inquiry" | "payment_issue" | "other" | "<your own short snake_case slug>",
   "proposed_action": {
     "tool": "gmail" | "google_calendar" | "ms_excel",
     "method": "send_email" | "create_event" | "write_range",
@@ -145,7 +159,8 @@ def parse_reasoning_response(text: str) -> ReasoningResult:
         if action_data
         else None
     )
-    return ReasoningResult(summary=data["summary"], proposed_action=proposed_action)
+    category = data.get("category") or "other"
+    return ReasoningResult(summary=data["summary"], proposed_action=proposed_action, category=category)
 
 
 def _strip_code_fence(text: str) -> str:

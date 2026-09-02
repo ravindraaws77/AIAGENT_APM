@@ -16,6 +16,8 @@ current one is approved.
 
 **This completes the bare-minimum end-to-end MVP**: a person can open the dashboard, fetch real Gmail/Calendar data for a process, see Claude's plain-language summary and proposed next action, approve or reject it, and see the result — all with status/audit persisted for later. Excel is built (phase 4) but not yet wired into the agent/API/UI (needs a workbook item id as extra input) — a natural phase 7 candidate.
 
+**Post-MVP hardening, found by real testing (not separately numbered phases, each its own PR):** a reasoner JSON-parsing crash on a markdown-fenced response; the reasoner fabricating a placeholder recipient when no real one was in the fetched data (now hard-refused at the tool layer, RFC 2606 reserved domains); no retry on a transient network error during a read, and a raw 500 instead of a clean API error; the approval card showing a raw payload dict instead of labeled fields; and — directly serving the "recognise when something has stalled" / "continuous learning from outcomes" goals in the original concept doc — the reasoner now classifies each situation with a stable category slug (e.g. `shipment_delay`), color-coded consistently in both the approval card and the History table, so a recurring pattern across different processes (three orders delayed by the same supplier issue, say) is visually obvious rather than three unrelated-looking approvals.
+
 ## Beyond phase 6 (not started — future phases, for discussion)
 
 - Voice/avatar layer (LiveKit) — Layers 1–2 of the master architecture

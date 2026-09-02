@@ -9,6 +9,7 @@ protocols vs. their real API-backed implementations).
 
 from __future__ import annotations
 
+import zlib
 from typing import Any
 
 
@@ -31,8 +32,66 @@ HISTORY_COLUMNS: list[dict[str, str]] = [
     {"name": "timestamp", "label": "Time", "field": "timestamp", "align": "left"},
     {"name": "tool", "label": "Tool", "field": "tool", "align": "left"},
     {"name": "event_type", "label": "Event", "field": "event_type", "align": "left"},
+    {"name": "category", "label": "Category", "field": "category", "align": "left"},
     {"name": "summary", "label": "Summary", "field": "summary", "align": "left"},
 ]
+
+# A handful of expected categories (see apm.agent.reasoner.SYSTEM_PROMPT)
+# get curated, meaningful colors. Anything else -- the model is free to
+# invent its own short slug -- still gets *a* color, picked
+# deterministically (same slug always maps to the same color, stable
+# across restarts) from a fallback palette, rather than no color at all.
+_CURATED_CATEGORY_COLORS: dict[str, str] = {
+    "shipment_delay": "red",
+    "renewal_reminder": "blue",
+    "missing_information": "orange",
+    "customer_inquiry": "purple",
+    "payment_issue": "deep-orange",
+    "other": "grey",
+}
+_FALLBACK_CATEGORY_COLORS: list[str] = ["teal", "indigo", "pink", "brown", "cyan", "lime"]
+
+
+def category_color(category: str) -> str:
+    """A stable Quasar/NiceGUI color name for a category slug, so the
+    same kind of issue always renders with the same color everywhere in
+    the dashboard -- the point being to make a recurring pattern (e.g.
+    three shipment delays in a row) visually obvious when scanning the
+    history table, not just readable one row at a time.
+
+    Uses crc32 rather than Python's built-in hash() for the fallback
+    palette: hash() is salted per-process for strings, which would give
+    a different color to the same category every time the app restarts.
+    """
+    if category in _CURATED_CATEGORY_COLORS:
+        return _CURATED_CATEGORY_COLORS[category]
+    index = zlib.crc32(category.encode("utf-8")) % len(_FALLBACK_CATEGORY_COLORS)
+    return _FALLBACK_CATEGORY_COLORS[index]
+
+
+def format_category_label(category: str) -> str:
+    return category.replace("_", " ").title()
+
+
+def prepare_history_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten each raw history event's nested `details.category` (set by
+    apm.state.store.StateStore.add_pending_action/resolve_pending_action)
+    into top-level `category`/`category_color` fields the History table
+    can bind directly to. Rows with no category (e.g. plain `read`
+    events) get an empty string, which the table's cell template treats
+    as "no badge" rather than showing a stray empty chip.
+    """
+    prepared = []
+    for row in rows:
+        category = (row.get("details") or {}).get("category") or ""
+        prepared.append(
+            {
+                **row,
+                "category": format_category_label(category) if category else "",
+                "category_color": category_color(category) if category else "",
+            }
+        )
+    return prepared
 
 
 def format_pending_action(action: dict[str, Any]) -> str:
