@@ -20,6 +20,7 @@ from typing import Any, Protocol
 
 from apm.config import Settings
 from apm.state.store import StateStore
+from apm.tools._retry import with_retry
 from apm.tools.base import ActionResult, BaseTool, Capability
 
 EXCEL_READONLY_SCOPE = "Files.Read"
@@ -134,6 +135,7 @@ class GraphApiExcelClient:
         else:
             self._workbook_base = f"{self.GRAPH_BASE}/me/drive/items/{item_id}/workbook"
 
+    @with_retry()
     def _get(self, path: str) -> dict[str, Any]:
         import requests
 
@@ -152,6 +154,9 @@ class GraphApiExcelClient:
     def get_range(self, sheet_name: str, address: str) -> dict[str, Any]:
         return self._get(f"/worksheets('{sheet_name}')/range(address='{address}')")
 
+    # Deliberately NOT retried -- see apm.tools._retry's module docstring:
+    # a dropped connection after the server already wrote the range must
+    # not turn into an automatic duplicate write.
     def update_range(self, sheet_name: str, address: str, values: list[list[Any]]) -> dict[str, Any]:
         import requests
 
