@@ -66,7 +66,7 @@ def test_proposed_action_pauses_for_approval(tmp_path: Path) -> None:
         tool="gmail",
         method="send_email",
         description="Send a follow-up email about the delay",
-        payload={"to": "customer@example.com", "subject": "Update", "body": "Your order is delayed."},
+        payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
     )
     graph, store, gmail_client, _ = _build(
         tmp_path, ReasoningResult(summary="There is a delay.", proposed_action=proposed)
@@ -89,7 +89,7 @@ def test_approval_executes_the_action(tmp_path: Path) -> None:
         tool="gmail",
         method="send_email",
         description="Send a follow-up email about the delay",
-        payload={"to": "customer@example.com", "subject": "Update", "body": "Your order is delayed."},
+        payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
     )
     graph, store, gmail_client, _ = _build(
         tmp_path, ReasoningResult(summary="There is a delay.", proposed_action=proposed)
@@ -100,7 +100,7 @@ def test_approval_executes_the_action(tmp_path: Path) -> None:
 
     assert outcome.final_result["executed"] is True
     assert gmail_client.sent == [
-        {"to": "customer@example.com", "subject": "Update", "body": "Your order is delayed."}
+        {"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."}
     ]
     assert store.list_pending_actions("order-1") == []
 

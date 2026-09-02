@@ -22,6 +22,29 @@ from apm.tools.base import ActionResult, BaseTool, Capability
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 
+# RFC 2606 reserves the .test/.example/.invalid/.localhost TLDs (any
+# domain ending in one of these can never resolve to a real mailbox) and
+# specifically example.com/net/org as documentation domains. A safety net
+# against the reasoner fabricating a plausible-looking placeholder
+# recipient (observed in practice: it proposed "customer@example.com"
+# when no real customer address was present anywhere in the fetched
+# data) — this check runs regardless of what the reasoner outputs or
+# whether a human approved it, since a human reviewing a payload has no
+# reason to recognize "example.com" as fake rather than a real domain
+# they don't happen to know.
+RESERVED_PLACEHOLDER_TLDS = frozenset({"test", "example", "invalid", "localhost"})
+RESERVED_PLACEHOLDER_DOMAINS = frozenset({"example.com", "example.net", "example.org", "example.edu"})
+
+
+def _is_reserved_placeholder_address(email_address: str) -> bool:
+    if "@" not in email_address:
+        return False
+    domain = email_address.rsplit("@", 1)[-1].lower()
+    if domain in RESERVED_PLACEHOLDER_DOMAINS:
+        return True
+    tld = domain.rsplit(".", 1)[-1]
+    return tld in RESERVED_PLACEHOLDER_TLDS
+
 
 class GmailClient(Protocol):
     """The minimal surface GmailTool needs from a Gmail API client. Both
@@ -100,7 +123,16 @@ class GmailTool(BaseTool):
         """Send an email. Only ever call this with dry_run=False from
         inside the agent graph, after the human-approval interrupt has
         returned an approval — see apm.agent.graph's execute_node.
+
+        Refuses outright (regardless of dry_run or approval) if `to` is
+        an RFC 2606 reserved/placeholder domain (example.com and
+        similar) — see RESERVED_PLACEHOLDER_DOMAINS above.
         """
+        if _is_reserved_placeholder_address(to):
+            summary = f"Refused to send to {to}: that domain is reserved for documentation/examples, not a real recipient"
+            self._log(process_id, "action_failed", summary, {"to": to, "subject": subject})
+            return ActionResult(executed=False, description=summary, details={"to": to, "reason": "reserved_placeholder_domain"})
+
         summary = f"Send email to {to}: {subject!r}"
         self.require_dry_run_guard(dry_run, process_id, summary)
 

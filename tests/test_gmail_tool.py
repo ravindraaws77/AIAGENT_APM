@@ -115,7 +115,7 @@ def test_send_email_dry_run_does_not_call_client(tmp_path: Path) -> None:
     client = FakeGmailClient([])
     tool = GmailTool(store, client)
 
-    result = tool.send_email("order-1", to="c@example.com", subject="Hi", body="body text")
+    result = tool.send_email("order-1", to="customer@realcorp.io", subject="Hi", body="body text")
 
     assert result.executed is False
     assert client.sent == []
@@ -129,12 +129,64 @@ def test_send_email_real_call_invokes_client_and_logs(tmp_path: Path) -> None:
     tool = GmailTool(store, client)
 
     result = tool.send_email(
-        "order-1", to="c@example.com", subject="Delay update", body="Sorry for the delay", dry_run=False
+        "order-1", to="customer@realcorp.io", subject="Delay update", body="Sorry for the delay", dry_run=False
     )
 
     assert result.executed is True
     assert result.details["message_id"] == "sent-1"
-    assert client.sent == [{"to": "c@example.com", "subject": "Delay update", "body": "Sorry for the delay"}]
+    assert client.sent == [{"to": "customer@realcorp.io", "subject": "Delay update", "body": "Sorry for the delay"}]
 
     events = store.list_events("order-1")
     assert any(e["event_type"] == "action_executed" and e["details"]["dry_run"] is False for e in events)
+
+
+def test_send_email_refuses_reserved_placeholder_domain(tmp_path: Path) -> None:
+    """Reproduces the real scenario: the reasoner proposed sending to a
+    fabricated 'customer@example.com' since no real customer address was
+    in the fetched data. The refusal must happen even with dry_run=False
+    -- this is the last line of defense before an actual send.
+    """
+    store = StateStore(tmp_path / "state.json")
+    client = FakeGmailClient([])
+    tool = GmailTool(store, client)
+
+    result = tool.send_email(
+        "order-1", to="customer@example.com", subject="Update", body="body", dry_run=False
+    )
+
+    assert result.executed is False
+    assert result.details["reason"] == "reserved_placeholder_domain"
+    assert client.sent == []  # never reached the real client
+
+    events = store.list_events("order-1")
+    assert any(e["event_type"] == "action_failed" for e in events)
+
+
+def test_send_email_refuses_reserved_tld_not_just_literal_domains(tmp_path: Path) -> None:
+    """RFC 2606 reserves whole TLDs (.test, .example, .invalid,
+    .localhost) -- any subdomain under them is fake, not just the exact
+    strings example.com/net/org.
+    """
+    store = StateStore(tmp_path / "state.json")
+    client = FakeGmailClient([])
+    tool = GmailTool(store, client)
+
+    for address in ["a@foo.test", "b@bar.example", "c@baz.invalid", "d@service.localhost"]:
+        result = tool.send_email("order-1", to=address, subject="x", body="y", dry_run=False)
+        assert result.executed is False, address
+        assert client.sent == []
+
+
+def test_send_email_does_not_false_positive_on_domains_containing_reserved_words(tmp_path: Path) -> None:
+    """A real company domain like testcorp.com must not be blocked just
+    because it contains the substring 'test' -- only the reserved TLD
+    itself (.test) or the exact example.* domains are refused.
+    """
+    store = StateStore(tmp_path / "state.json")
+    client = FakeGmailClient([])
+    tool = GmailTool(store, client)
+
+    result = tool.send_email("order-1", to="c@testcorp.com", subject="x", body="y", dry_run=False)
+
+    assert result.executed is True
+    assert client.sent == [{"to": "c@testcorp.com", "subject": "x", "body": "y"}]
