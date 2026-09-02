@@ -20,4 +20,5 @@ fastapi>=0.110
 uvicorn>=0.29
 httpx>=0.27
 
-# Phase 6b: NiceGUI frontend — see docs/roadmap.md.
+# Phase 6b: NiceGUI frontend.
+nicegui>=1.4
