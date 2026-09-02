@@ -12,8 +12,9 @@ from __future__ import annotations
 from fastapi import Depends, FastAPI, HTTPException
 
 from apm.agent.graph import RunOutcome, resume_process, start_process
-from apm.api.dependencies import get_graph, get_state_store
-from apm.api.schemas import DecisionRequest, RunOutcomeResponse, StartProcessRequest
+from apm.agent.intent import IntentParser
+from apm.api.dependencies import get_graph, get_intent_parser, get_state_store
+from apm.api.schemas import DecisionRequest, QueryRequest, RunOutcomeResponse, StartProcessRequest
 from apm.state.store import StateStore
 
 
@@ -45,17 +46,41 @@ def create_app() -> FastAPI:
 
     @app.post("/processes/{process_id}/start", response_model=RunOutcomeResponse)
     def start(process_id: str, body: StartProcessRequest, graph=Depends(get_graph)) -> RunOutcomeResponse:
-        queries: dict[str, dict] = {}
-        if body.gmail_query is not None:
-            queries["gmail"] = {"query": body.gmail_query, "max_results": body.gmail_max_results}
-        if body.calendar_query is not None:
-            queries["google_calendar"] = {"query": body.calendar_query, "max_results": body.calendar_max_results}
+        queries = _build_queries(
+            body.gmail_query, body.calendar_query, body.gmail_max_results, body.calendar_max_results
+        )
         if not queries:
             raise HTTPException(
                 status_code=400, detail="at least one of gmail_query / calendar_query is required"
             )
         try:
             outcome = start_process(graph, process_id, queries)
+        except Exception as exc:
+            raise _upstream_error(exc) from exc
+        return _to_response(outcome)
+
+    @app.post("/query", response_model=RunOutcomeResponse)
+    def query(
+        body: QueryRequest,
+        intent_parser: IntentParser = Depends(get_intent_parser),
+        graph=Depends(get_graph),
+        store: StateStore = Depends(get_state_store),
+    ) -> RunOutcomeResponse:
+        """The single free-text entry point: resolves `body.text` to a
+        process id + Gmail/Calendar queries (apm.agent.intent), then runs
+        the same graph /start does. Known process ids are passed to the
+        parser so it can recognize a request that continues an existing
+        order/case instead of always minting a new id.
+        """
+        known_process_ids = [process["process_id"] for process in store.list_processes()]
+        try:
+            intent = intent_parser.parse(body.text, known_process_ids)
+        except Exception as exc:
+            raise _upstream_error(exc) from exc
+
+        queries = _build_queries(intent.gmail_query, intent.calendar_query)
+        try:
+            outcome = start_process(graph, intent.process_id, queries)
         except Exception as exc:
             raise _upstream_error(exc) from exc
         return _to_response(outcome)
@@ -69,6 +94,20 @@ def create_app() -> FastAPI:
         return _to_response(outcome)
 
     return app
+
+
+def _build_queries(
+    gmail_query: str | None,
+    calendar_query: str | None,
+    gmail_max_results: int = 5,
+    calendar_max_results: int = 5,
+) -> dict[str, dict]:
+    queries: dict[str, dict] = {}
+    if gmail_query is not None:
+        queries["gmail"] = {"query": gmail_query, "max_results": gmail_max_results}
+    if calendar_query is not None:
+        queries["google_calendar"] = {"query": calendar_query, "max_results": calendar_max_results}
+    return queries
 
 
 def _upstream_error(exc: Exception) -> HTTPException:

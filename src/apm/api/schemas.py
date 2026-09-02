@@ -24,6 +24,15 @@ class DecisionRequest(BaseModel):
     approved: bool
 
 
+class QueryRequest(BaseModel):
+    """A free-text request ("chase up order 4521", "check the Acme
+    renewal"), routed through apm.agent.intent to resolve a process id and
+    Gmail/Calendar queries before running the same graph /start uses.
+    """
+
+    text: str
+
+
 class RunOutcomeResponse(BaseModel):
     """Mirrors apm.agent.graph.RunOutcome. Exactly one of pending_action /
     final_result is set: pending_action means the graph is paused waiting

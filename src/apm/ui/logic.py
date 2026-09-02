@@ -13,19 +13,13 @@ import zlib
 from typing import Any
 
 
-def build_start_request(gmail_query: str, calendar_query: str) -> dict[str, str]:
-    """Build the POST /processes/{id}/start request body from the two
-    query inputs, omitting empty ones. Returns {} if neither is set — the
-    caller should treat that as "nothing to fetch" and not call the API
-    (the backend would reject it with a 400 anyway; checking here avoids
-    a round trip for an input mistake the UI can catch immediately).
+def build_query_request(text: str) -> dict[str, str] | None:
+    """Build the POST /query request body from the dashboard's single
+    free-text prompt bar. None if the box is blank — the caller should
+    treat that as "nothing to ask" and not call the API.
     """
-    body: dict[str, str] = {}
-    if gmail_query.strip():
-        body["gmail_query"] = gmail_query.strip()
-    if calendar_query.strip():
-        body["calendar_query"] = calendar_query.strip()
-    return body
+    text = text.strip()
+    return {"text": text} if text else None
 
 
 HISTORY_COLUMNS: list[dict[str, str]] = [
@@ -142,6 +136,84 @@ def format_action_details(action: dict[str, Any]) -> list[tuple[str, str]]:
         ]
 
     return [(str(key), str(value)) for key, value in payload.items()]
+
+
+def order_status(process: dict[str, Any]) -> tuple[str, str]:
+    """Derive a (label, color) status pill for one process's persisted
+    status record (apm.state.store.StateStore.set_status).
+
+    Relies on apm.agent.graph's stage sequence: fetch_node sets "fetched",
+    reason_node sets "summarized", and execute_node is the only thing
+    that ever sets "done" -- which happens exactly once, after a human
+    decision resolves the approval interrupt (or immediately, if the
+    reasoner proposed nothing). So a process stuck at "summarized" -- it
+    never advances to "done" on its own -- means the graph is paused at
+    the approval interrupt: exactly the moment the orders list exists to
+    surface, without a separate query against /pending for every row.
+    """
+    stage = process.get("stage")
+    if stage == "summarized":
+        return "Needs approval", "amber"
+    if stage == "done":
+        result = process.get("result") or {}
+        if result.get("executed"):
+            return "Done", "green"
+        if result.get("reason") == "rejected":
+            return "Rejected", "red"
+        if result.get("reason") == "no_action_proposed":
+            return "No action needed", "grey"
+        return "Done", "green"
+    return "In progress", "blue"
+
+
+def prepare_order_rows(processes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Turn raw GET /processes records into rows the orders list renders
+    directly: a status pill (order_status) plus the same category badge
+    styling the History table already uses (category_color,
+    format_category_label). Sorted most-recently-updated first, so an
+    order that just changed -- especially one that now needs a decision
+    -- surfaces at the top instead of wherever it happened to be created.
+    """
+    rows = []
+    for process in processes:
+        category = process.get("category") or ""
+        status_label, status_color = order_status(process)
+        rows.append(
+            {
+                "process_id": process["process_id"],
+                "category": format_category_label(category) if category else "",
+                "category_color": category_color(category) if category else "",
+                "status_label": status_label,
+                "status_color": status_color,
+                "summary": process.get("summary") or "",
+                "updated_at": process.get("updated_at") or "",
+            }
+        )
+    rows.sort(key=lambda row: row["updated_at"], reverse=True)
+    return rows
+
+
+def normalize_pending_action(record: dict[str, Any]) -> dict[str, Any]:
+    """GET /processes/{id}/pending returns apm.state.store's persisted
+    pending-action records, whose `payload` field is the *entire*
+    proposed-action dict apm.agent.graph's propose_node stored (tool,
+    method, description, and its own nested payload) -- not just the
+    tool call's arguments. This flattens one record into the
+    {tool, method, description, payload, category} shape
+    format_pending_action/format_action_details already expect, which is
+    what the graph's live interrupt() payload looks like directly (the
+    shape the single-page dashboard used to get straight from
+    POST /start's response, before there was a separate detail page that
+    has to reconstruct it from a fresh GET instead).
+    """
+    proposed = record.get("payload") or {}
+    return {
+        "tool": proposed.get("tool", record.get("tool")),
+        "method": proposed.get("method"),
+        "description": proposed.get("description", record.get("description")),
+        "payload": proposed.get("payload") or {},
+        "category": record.get("category", "other"),
+    }
 
 
 def format_result(result: dict[str, Any] | None) -> str:
