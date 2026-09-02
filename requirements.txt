@@ -1,0 +1,6 @@
+# Phase 1 (scaffolding) dependencies only.
+# Tool-specific and agent/UI dependencies (google-api-python-client,
+# msgraph-sdk, langgraph, langchain-anthropic, streamlit, ...) are added
+# in each phase's own PR — see docs/roadmap.md.
+python-dotenv>=1.0
+pytest>=8.0
