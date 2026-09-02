@@ -70,7 +70,7 @@ def test_full_approval_flow_through_the_api(tmp_path: Path) -> None:
         tool="gmail",
         method="send_email",
         description="Send a follow-up email about the delay",
-        payload={"to": "customer@example.com", "subject": "Update", "body": "Your order is delayed."},
+        payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
     )
     client, store, gmail_client, _ = _client(
         tmp_path, ReasoningResult(summary="There is a delay.", proposed_action=proposed)

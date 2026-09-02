@@ -46,6 +46,20 @@ Every connector also supports a `dry_run` mode: report exactly what a
 write/action call *would* do without doing it, used for local testing
 before real credentials are wired up.
 
+**Human approval is necessary but not sufficient on its own** — found in
+practice, not just in theory: with a self-sent test email that had no
+real customer address anywhere in it, the reasoner proposed sending to a
+fabricated `customer@example.com`, and a human approver had no way to
+recognize that address as fake at a glance rather than a real domain
+they simply didn't recognize. Two fixes, at two different layers:
+- The reasoner's prompt now explicitly forbids inventing contact details
+  not present in the fetched data (`apm/agent/reasoner.py`'s
+  `SYSTEM_PROMPT`) — a mitigation, not a guarantee.
+- `GmailTool.send_email` hard-refuses any RFC 2606 reserved/placeholder
+  domain (`example.com`, anything under `.test`/`.example`/`.invalid`/
+  `.localhost`, etc.) regardless of `dry_run` or approval status — a
+  guarantee, since it doesn't depend on the model following instructions.
+
 ## 6. Least privilege in practice for this MVP
 - Start every new tool integration read-only; add write/action scopes only
   once the read path is reviewed and working (matches the workstream's own
