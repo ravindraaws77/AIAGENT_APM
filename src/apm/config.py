@@ -27,6 +27,7 @@ class Settings:
     """
 
     anthropic_api_key: str | None
+    anthropic_model: str | None
     google_client_id: str | None
     google_client_secret: str | None
     ms_graph_client_id: str | None
@@ -38,6 +39,7 @@ class Settings:
 def load_settings() -> Settings:
     return Settings(
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        anthropic_model=os.environ.get("ANTHROPIC_MODEL"),
         google_client_id=os.environ.get("GOOGLE_CLIENT_ID"),
         google_client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
         ms_graph_client_id=os.environ.get("MS_GRAPH_CLIENT_ID"),

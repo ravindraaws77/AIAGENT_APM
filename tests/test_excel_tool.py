@@ -14,12 +14,17 @@ class FakeExcelClient:
     def __init__(self, worksheets: list[str], ranges: dict[tuple[str, str], dict[str, Any]]) -> None:
         self._worksheets = worksheets
         self._ranges = ranges
+        self.updates: list[dict[str, Any]] = []
 
     def list_worksheets(self) -> list[str]:
         return self._worksheets
 
     def get_range(self, sheet_name: str, address: str) -> dict[str, Any]:
         return self._ranges[(sheet_name, address)]
+
+    def update_range(self, sheet_name: str, address: str, values: list[list[Any]]) -> dict[str, Any]:
+        self.updates.append({"sheet_name": sheet_name, "address": address, "values": values})
+        return {"address": address, "values": values}
 
 
 class BrokenExcelClient:
@@ -29,9 +34,12 @@ class BrokenExcelClient:
     def get_range(self, sheet_name: str, address: str) -> dict[str, Any]:
         raise RuntimeError("simulated API failure")
 
+    def update_range(self, sheet_name: str, address: str, values: list[list[Any]]) -> dict[str, Any]:
+        raise RuntimeError("simulated API failure")
 
-def test_excel_tool_is_read_only() -> None:
-    assert ExcelTool.capabilities == frozenset({Capability.READ})
+
+def test_excel_tool_capabilities() -> None:
+    assert ExcelTool.capabilities == frozenset({Capability.READ, Capability.WRITE})
 
 
 def test_list_worksheets_logs(tmp_path: Path) -> None:
@@ -91,3 +99,33 @@ def test_health_check_false_on_client_error(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.json")
     tool = ExcelTool(store, BrokenExcelClient())
     assert tool.health_check() is False
+
+
+def test_write_range_dry_run_does_not_call_client(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    client = FakeExcelClient([], {})
+    tool = ExcelTool(store, client)
+
+    result = tool.write_range("order-1", sheet_name="Renewals", address="A2:B2", values=[["Acme", "2026-11-01"]])
+
+    assert result.executed is False
+    assert client.updates == []
+    events = store.list_events("order-1")
+    assert any(e["event_type"] == "action_proposed" and e["details"]["dry_run"] is True for e in events)
+
+
+def test_write_range_real_call_invokes_client_and_logs(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    client = FakeExcelClient([], {})
+    tool = ExcelTool(store, client)
+
+    result = tool.write_range(
+        "order-1", sheet_name="Renewals", address="A2:B2", values=[["Acme", "2026-11-01"]], dry_run=False
+    )
+
+    assert result.executed is True
+    assert result.details["row_count"] == 1
+    assert client.updates == [{"sheet_name": "Renewals", "address": "A2:B2", "values": [["Acme", "2026-11-01"]]}]
+
+    events = store.list_events("order-1")
+    assert any(e["event_type"] == "action_executed" and e["details"]["dry_run"] is False for e in events)

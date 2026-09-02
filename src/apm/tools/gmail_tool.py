@@ -1,10 +1,13 @@
-"""Gmail connector — read/search only for this phase.
+"""Gmail connector.
 
-Per the tool-integration skill's "read first" rule, sending, drafting, and
-labeling are deliberately *not* implemented here even though they're
-documented as a future capability in docs/capability-map.md. They will be
-added once the human-approval interrupt exists (phase 5), so a send call
-is never reachable without that gate.
+Read (search/read messages) has been available since phase 2. This phase
+(5) adds send_email — the write/action capability deferred until now per
+the tool-integration skill's "read first" rule, because it needs the
+LangGraph human-approval interrupt (apm.agent.graph) to sit in front of
+it. send_email still defends in depth on its own: it defaults to
+dry_run=True and logs every call via require_dry_run_guard, but the real
+gate is the agent never calling it with dry_run=False except after an
+approved interrupt.
 """
 
 from __future__ import annotations
@@ -14,9 +17,10 @@ from typing import Any, Protocol
 
 from apm.config import Settings
 from apm.state.store import StateStore
-from apm.tools.base import BaseTool, Capability
+from apm.tools.base import ActionResult, BaseTool, Capability
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 
 
 class GmailClient(Protocol):
@@ -30,6 +34,8 @@ class GmailClient(Protocol):
 
     def get_message(self, message_id: str) -> dict[str, Any]: ...
 
+    def send_message(self, to: str, subject: str, body: str) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True)
 class EmailSummary:
@@ -42,10 +48,13 @@ class EmailSummary:
 
 
 class GmailTool(BaseTool):
-    """Read-only Gmail connector: search and read message content/metadata."""
+    """Gmail connector: search/read messages, and send an email — the
+    latter only ever reachable through the agent's approval interrupt
+    (see apm.agent.graph).
+    """
 
     name = "gmail"
-    capabilities = frozenset({Capability.READ})
+    capabilities = frozenset({Capability.READ, Capability.ACTION})
 
     def __init__(self, state: StateStore, client: GmailClient) -> None:
         super().__init__(state)
@@ -84,6 +93,28 @@ class GmailTool(BaseTool):
             {"message_id": message_id},
         )
         return summary
+
+    def send_email(
+        self, process_id: str, to: str, subject: str, body: str, dry_run: bool = True
+    ) -> ActionResult:
+        """Send an email. Only ever call this with dry_run=False from
+        inside the agent graph, after the human-approval interrupt has
+        returned an approval — see apm.agent.graph's execute_node.
+        """
+        summary = f"Send email to {to}: {subject!r}"
+        self.require_dry_run_guard(dry_run, process_id, summary)
+
+        if dry_run:
+            return ActionResult(
+                executed=False, description=summary, details={"to": to, "subject": subject, "body": body}
+            )
+
+        sent = self._client.send_message(to=to, subject=subject, body=body)
+        return ActionResult(
+            executed=True,
+            description=summary,
+            details={"to": to, "subject": subject, "message_id": sent.get("id")},
+        )
 
     @staticmethod
     def _to_summary(raw: dict[str, Any]) -> EmailSummary:
@@ -134,14 +165,24 @@ class GoogleApiGmailClient:
             .execute()
         )
 
+    def send_message(self, to: str, subject: str, body: str) -> dict[str, Any]:
+        import base64
+        from email.mime.text import MIMEText
+
+        mime_message = MIMEText(body)
+        mime_message["to"] = to
+        mime_message["subject"] = subject
+        raw = base64.urlsafe_b64encode(mime_message.as_bytes()).decode("ascii")
+        return self._service.users().messages().send(userId="me", body={"raw": raw}).execute()
+
 
 def build_gmail_tool(state: StateStore, settings: Settings) -> GmailTool:
     """Convenience factory: runs the OAuth flow (if needed) and returns a
     GmailTool backed by the real Gmail API. Used by scripts/gmail_demo.py
-    and, later, by the agent — not by unit tests, which construct
-    GmailTool directly with a fake client instead.
+    and by the agent (apm.agent.graph) — not by unit tests, which
+    construct GmailTool directly with a fake client instead.
     """
     from apm.tools.google_auth import load_credentials
 
-    credentials = load_credentials(settings, scopes=[GMAIL_READONLY_SCOPE])
+    credentials = load_credentials(settings, scopes=[GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE])
     return GmailTool(state, GoogleApiGmailClient(credentials))

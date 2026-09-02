@@ -80,6 +80,9 @@ class BaseTool(ABC):
         does not replace the human-approval interrupt — it just makes it
         impossible for a connector to silently skip the audit trail on a
         real (non-dry-run) call.
+
+        Logs "action_executed" for a real call, or "action_proposed" for a
+        dry run (a preview of what would happen, not a read).
         """
-        event_type = "action_executed" if not dry_run else "read"
+        event_type = "action_executed" if not dry_run else "action_proposed"
         self._log(process_id, event_type, summary, {"dry_run": dry_run})

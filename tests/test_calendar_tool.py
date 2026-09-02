@@ -13,6 +13,7 @@ class FakeCalendarClient:
 
     def __init__(self, events: list[dict[str, Any]]) -> None:
         self._events = {e["id"]: e for e in events}
+        self.inserted: list[dict[str, Any]] = []
 
     def list_events(
         self, time_min: str | None, time_max: str | None, query: str | None, max_results: int
@@ -22,12 +23,19 @@ class FakeCalendarClient:
     def get_event(self, event_id: str) -> dict[str, Any]:
         return self._events[event_id]
 
+    def insert_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.inserted.append(payload)
+        return {"id": f"created-{len(self.inserted)}"}
+
 
 class BrokenCalendarClient:
     def list_events(self, time_min, time_max, query, max_results):
         raise RuntimeError("simulated API failure")
 
     def get_event(self, event_id: str) -> dict[str, Any]:
+        raise RuntimeError("simulated API failure")
+
+    def insert_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("simulated API failure")
 
 
@@ -44,8 +52,8 @@ def _raw_event(
     }
 
 
-def test_calendar_tool_is_read_only() -> None:
-    assert CalendarTool.capabilities == frozenset({Capability.READ})
+def test_calendar_tool_capabilities() -> None:
+    assert CalendarTool.capabilities == frozenset({Capability.READ, Capability.ACTION})
 
 
 def test_search_events_returns_summaries_and_logs(tmp_path: Path) -> None:
@@ -126,3 +134,43 @@ def test_health_check_false_on_client_error(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.json")
     tool = CalendarTool(store, BrokenCalendarClient())
     assert tool.health_check() is False
+
+
+def test_create_event_dry_run_does_not_call_client(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    client = FakeCalendarClient([])
+    tool = CalendarTool(store, client)
+
+    result = tool.create_event(
+        "order-1", title="Renewal call", start="2026-09-10T15:00:00Z", end="2026-09-10T15:30:00Z"
+    )
+
+    assert result.executed is False
+    assert client.inserted == []
+    events = store.list_events("order-1")
+    assert any(e["event_type"] == "action_proposed" and e["details"]["dry_run"] is True for e in events)
+
+
+def test_create_event_real_call_invokes_client_and_logs(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    client = FakeCalendarClient([])
+    tool = CalendarTool(store, client)
+
+    result = tool.create_event(
+        "order-1",
+        title="Renewal call",
+        start="2026-09-10T15:00:00Z",
+        end="2026-09-10T15:30:00Z",
+        attendees=["customer@example.com"],
+        location="Google Meet",
+        dry_run=False,
+    )
+
+    assert result.executed is True
+    assert result.details["event_id"] == "created-1"
+    assert len(client.inserted) == 1
+    assert client.inserted[0]["summary"] == "Renewal call"
+    assert client.inserted[0]["location"] == "Google Meet"
+
+    events = store.list_events("order-1")
+    assert any(e["event_type"] == "action_executed" and e["details"]["dry_run"] is False for e in events)

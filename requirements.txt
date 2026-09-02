@@ -11,6 +11,9 @@ google-auth-oauthlib>=1.2
 msal>=1.28
 requests>=2.31
 
-# Remaining agent/UI dependencies (langgraph, langchain-anthropic,
-# streamlit, ...) are added in each later phase's own PR — see
-# docs/roadmap.md.
+# Phase 5: LangGraph agent + Claude reasoning.
+langgraph>=0.2
+anthropic>=0.40
+
+# Remaining agent/UI dependencies (streamlit, ...) are added in phase 6
+# — see docs/roadmap.md.

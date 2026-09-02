@@ -1,9 +1,10 @@
-"""MS Excel connector (via Microsoft Graph) — read-only for this phase.
+"""MS Excel connector (via Microsoft Graph).
 
-Same read-first pattern as gmail_tool.py / calendar_tool.py: writing or
-appending rows is documented as a future capability in
-docs/capability-map.md, deferred to phase 5 where the LangGraph
-human-approval interrupt exists to gate it.
+Read (list worksheets, read a range) has been available since phase 4.
+This phase (5) adds write_range — the write capability deferred until
+now, same reasoning as Gmail's send_email / Calendar's create_event: only
+ever called with dry_run=False from inside the agent graph's
+execute_node, after an approved interrupt.
 
 Unlike Gmail/Calendar (which operate on "the" mailbox/calendar), an Excel
 connector is bound to one specific workbook — a OneDrive/SharePoint drive
@@ -19,9 +20,10 @@ from typing import Any, Protocol
 
 from apm.config import Settings
 from apm.state.store import StateStore
-from apm.tools.base import BaseTool, Capability
+from apm.tools.base import ActionResult, BaseTool, Capability
 
 EXCEL_READONLY_SCOPE = "Files.Read"
+EXCEL_READWRITE_SCOPE = "Files.ReadWrite"
 
 
 class ExcelClient(Protocol):
@@ -34,6 +36,8 @@ class ExcelClient(Protocol):
 
     def get_range(self, sheet_name: str, address: str) -> dict[str, Any]: ...
 
+    def update_range(self, sheet_name: str, address: str, values: list[list[Any]]) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True)
 class RangeData:
@@ -43,12 +47,14 @@ class RangeData:
 
 
 class ExcelTool(BaseTool):
-    """Read-only Excel connector, bound to one workbook at construction
-    time (see build_excel_tool).
+    """Excel connector, bound to one workbook at construction time (see
+    build_excel_tool): reads worksheets/ranges, and writes a range — the
+    latter only ever reachable through the agent's approval interrupt
+    (see apm.agent.graph).
     """
 
     name = "ms_excel"
-    capabilities = frozenset({Capability.READ})
+    capabilities = frozenset({Capability.READ, Capability.WRITE})
 
     def __init__(self, state: StateStore, client: ExcelClient) -> None:
         super().__init__(state)
@@ -83,6 +89,31 @@ class ExcelTool(BaseTool):
             {"sheet_name": sheet_name, "address": address, "row_count": len(data.values)},
         )
         return data
+
+
+    def write_range(
+        self, process_id: str, sheet_name: str, address: str, values: list[list[Any]], dry_run: bool = True
+    ) -> ActionResult:
+        """Overwrite a cell range with new values (a list of rows). Only
+        ever call this with dry_run=False from inside the agent graph,
+        after the human-approval interrupt has returned an approval.
+        """
+        summary = f"Write {len(values)} row(s) to {sheet_name}!{address}"
+        self.require_dry_run_guard(dry_run, process_id, summary)
+
+        if dry_run:
+            return ActionResult(
+                executed=False,
+                description=summary,
+                details={"sheet_name": sheet_name, "address": address, "values": values},
+            )
+
+        self._client.update_range(sheet_name, address, values)
+        return ActionResult(
+            executed=True,
+            description=summary,
+            details={"sheet_name": sheet_name, "address": address, "row_count": len(values)},
+        )
 
 
 class GraphApiExcelClient:
@@ -121,6 +152,18 @@ class GraphApiExcelClient:
     def get_range(self, sheet_name: str, address: str) -> dict[str, Any]:
         return self._get(f"/worksheets('{sheet_name}')/range(address='{address}')")
 
+    def update_range(self, sheet_name: str, address: str, values: list[list[Any]]) -> dict[str, Any]:
+        import requests
+
+        response = requests.patch(
+            f"{self._workbook_base}/worksheets('{sheet_name}')/range(address='{address}')",
+            headers={"Authorization": f"Bearer {self._access_token}"},
+            json={"values": values},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
 
 def build_excel_tool(
     state: StateStore, settings: Settings, item_id: str, drive_id: str | None = None
@@ -130,5 +173,5 @@ def build_excel_tool(
     """
     from apm.tools.ms_graph_auth import acquire_access_token
 
-    access_token = acquire_access_token(settings, scopes=[EXCEL_READONLY_SCOPE])
+    access_token = acquire_access_token(settings, scopes=[EXCEL_READWRITE_SCOPE])
     return ExcelTool(state, GraphApiExcelClient(access_token, item_id, drive_id))
