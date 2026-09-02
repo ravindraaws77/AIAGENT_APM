@@ -39,6 +39,52 @@ def format_pending_action(action: dict[str, Any]) -> str:
     return f"{action['tool']}.{action['method']}: {action['description']}"
 
 
+def format_action_details(action: dict[str, Any]) -> list[tuple[str, str]]:
+    """Turn a proposed action's payload into an ordered list of
+    (label, value) pairs for friendly display in the approval card,
+    instead of a raw JSON/dict dump. Tailored to each method's payload
+    shape (see apm.agent.reasoner.SYSTEM_PROMPT's "Payload shapes"),
+    since a person approving "send an email" wants To/Subject/Body, not
+    Python dict syntax with escaped newlines.
+
+    Falls back to raw key/value pairs for a method this doesn't
+    recognize yet, so a future action type still displays something
+    rather than being silently dropped.
+    """
+    payload = action.get("payload") or {}
+    method = action.get("method")
+
+    if method == "send_email":
+        return [
+            ("To", str(payload.get("to", ""))),
+            ("Subject", str(payload.get("subject", ""))),
+            ("Body", str(payload.get("body", ""))),
+        ]
+
+    if method == "create_event":
+        details = [
+            ("Title", str(payload.get("title", ""))),
+            ("Start", str(payload.get("start", ""))),
+            ("End", str(payload.get("end", ""))),
+        ]
+        attendees = payload.get("attendees") or []
+        if attendees:
+            details.append(("Attendees", ", ".join(attendees)))
+        if payload.get("location"):
+            details.append(("Location", str(payload["location"])))
+        return details
+
+    if method == "write_range":
+        values = payload.get("values") or []
+        return [
+            ("Sheet", str(payload.get("sheet_name", ""))),
+            ("Range", str(payload.get("address", ""))),
+            ("Rows", str(len(values))),
+        ]
+
+    return [(str(key), str(value)) for key, value in payload.items()]
+
+
 def format_result(result: dict[str, Any] | None) -> str:
     """Plain-language rendering of a RunOutcome's final_result for the
     dashboard, distinguishing "nothing was proposed", "you rejected it",

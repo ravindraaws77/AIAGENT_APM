@@ -19,7 +19,13 @@ import os
 import httpx
 from nicegui import ui
 
-from apm.ui.logic import HISTORY_COLUMNS, build_start_request, format_pending_action, format_result
+from apm.ui.logic import (
+    HISTORY_COLUMNS,
+    build_start_request,
+    format_action_details,
+    format_pending_action,
+    format_result,
+)
 
 try:
     from dotenv import load_dotenv
@@ -77,7 +83,11 @@ async def index() -> None:
         with ui.card().classes("border-2 border-amber-400 mt-2"):
             ui.label("Approval needed").classes("font-bold text-amber-700")
             ui.label(format_pending_action(action))
-            ui.code(str(action["payload"])).classes("w-full")
+            with ui.column().classes("gap-1 w-full mt-1"):
+                for label, value in format_action_details(action):
+                    with ui.row().classes("gap-2 items-start w-full"):
+                        ui.label(f"{label}:").classes("font-semibold w-20 shrink-0")
+                        ui.label(value).classes("whitespace-pre-wrap")
             with ui.row():
                 ui.button("Approve", color="green", on_click=lambda: handle_decision(True))
                 ui.button("Reject", color="red", on_click=lambda: handle_decision(False))
