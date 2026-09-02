@@ -5,7 +5,7 @@ This maps the bare-minimum build to the team's 5-layer master architecture
 
 | # | Master layer | MVP status | MVP component |
 |---|---|---|---|
-| 1 | Experience / Presentation (avatar/UI) | Simplified | Streamlit dashboard (`src/apm/ui/app.py`, phase 6) — text/visual only, no avatar or voice yet |
+| 1 | Experience / Presentation (avatar/UI) | Simplified | FastAPI backend (`src/apm/api/`, phase 6a) wrapping the agent, with a NiceGUI dashboard (`src/apm/ui/`, phase 6b) as the presentation layer — text/visual only, no avatar or voice yet |
 | 2 | Real-Time Interaction (LiveKit + voice) | **Out of scope** | Deferred to a later phase once the core flow is proven |
 | 3 | Intelligence / Conversation (reasoning model) | **Implemented (phase 5)** | `src/apm/agent/reasoner.py` — `ClaudeReasoner` calls Claude to summarize fetched data and propose at most one next action |
 | 4 | Process Orchestration (LangGraph) | **Implemented (phase 5)** | `src/apm/agent/graph.py` — fetch → reason → propose → **human-approval `interrupt()`** → execute → persist. Try it end-to-end with `scripts/agent_demo.py` |

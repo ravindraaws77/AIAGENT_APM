@@ -15,5 +15,9 @@ requests>=2.31
 langgraph>=0.2
 anthropic>=0.40
 
-# Remaining agent/UI dependencies (streamlit, ...) are added in phase 6
-# — see docs/roadmap.md.
+# Phase 6a: FastAPI backend.
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
+
+# Phase 6b: NiceGUI frontend — see docs/roadmap.md.
