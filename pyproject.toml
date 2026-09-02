@@ -13,3 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+asyncio_mode = "auto"
+# Tells nicegui.testing's `user` fixture (tests/test_ui_pages.py, via the
+# root conftest.py) which file to load as the NiceGUI app under test.
+main_file = "src/apm/ui/app.py"
