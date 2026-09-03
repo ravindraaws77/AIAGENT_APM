@@ -6,7 +6,7 @@ Setup (one-time):
   1. Follow .env.example / docs/capability-map.md to create a Google Cloud
      OAuth client and enable the Gmail API, using your sandbox account.
   2. Copy .env.example to .env and fill in GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET.
-  3. pip install -e .  &&  pip install -r requirements.txt
+  3. pip install -e .
 
 Usage:
   python scripts/gmail_demo.py "newer_than:30d"

@@ -3,6 +3,39 @@ name = "apm"
 version = "0.1.0"
 description = "Agentic Process Management MVP"
 requires-python = ">=3.10"
+# Core: the integration layer (apm.tools/apm.agent/apm.state) plus its
+# API surface (apm.api) -- installable and deployable on its own, e.g.
+# for a future voice/LiveKit presentation layer that talks to the API
+# instead of the NiceGUI dashboard. `pip install .` alone gets you
+# `uvicorn apm.api.app:app` with no dashboard dependency pulled in.
+dependencies = [
+    "python-dotenv>=1.0",
+    # Gmail (and shared Google OAuth helper used by Calendar too).
+    "google-api-python-client>=2.100",
+    "google-auth-httplib2>=0.2",
+    "google-auth-oauthlib>=1.2",
+    # MS Excel via Microsoft Graph.
+    "msal>=1.28",
+    "requests>=2.31",
+    # LangGraph agent + Claude reasoning.
+    "langgraph>=0.2",
+    "anthropic>=0.40",
+    # FastAPI backend.
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    # Local/Google Drive Excel connector: parses/edits .xlsx bytes
+    # directly (no cell-range API on either source).
+    "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+# The NiceGUI dashboard: a presentation layer that talks to the core
+# API over HTTP (apm.ui never imports apm.agent/apm.tools directly) --
+# not required to run the API itself.
+ui = ["nicegui>=1.4", "httpx>=0.27"]
+# httpx is here too: FastAPI's TestClient (tests/test_api.py) needs it
+# regardless of whether the ui extra is installed.
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "httpx>=0.27"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
