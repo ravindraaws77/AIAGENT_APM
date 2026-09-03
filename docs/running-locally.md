@@ -30,7 +30,7 @@ python -m venv .venv
 .venv\Scripts\activate          # Windows
 # source .venv/bin/activate     # macOS/Linux
 
-pip install -e ".[ui,dev]"
+pip install -e ".[ui,integration-layer]"
 pytest -q
 ```
 
@@ -55,7 +55,7 @@ python -m venv .venv-core
 .venv-core\Scripts\activate          # Windows
 # source .venv-core/bin/activate     # macOS/Linux
 
-pip install -e ".[dev]"
+pip install -e ".[integration-layer]"
 pytest -q
 ```
 
@@ -75,15 +75,15 @@ Confirm the dashboard truly isn't there:
 python -c "import nicegui"    # should raise ModuleNotFoundError
 ```
 
-## What `[dev]` and `[ui]` each add
+## What `[integration-layer]` and `[ui]` each add
 
 | Extra | Adds | Needed for |
 |---|---|---|
 | *(none)* | `fastapi`, `uvicorn`, `langgraph`, `anthropic`, `openpyxl`, Google/MS Graph client libs | Running the API/agent/tools layer |
-| `dev` | `pytest`, `pytest-asyncio`, `httpx` | Running the test suite (`httpx` is required by FastAPI's `TestClient`, regardless of the dashboard) |
+| `integration-layer` | `pytest`, `pytest-asyncio`, `httpx` | Running the test suite (`httpx` is required by FastAPI's `TestClient`, regardless of the dashboard) |
 | `ui` | `nicegui`, `httpx` | Running the NiceGUI dashboard (`python -m apm.ui.app`) |
 
-`pip install -e ".[ui,dev]"` installs all three at once.
+`pip install -e ".[ui,integration-layer]"` installs all three at once.
 
 ## Quick sanity check after any dependency change
 

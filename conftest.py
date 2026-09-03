@@ -6,7 +6,8 @@ Must live at the repository root, not under tests/: pytest disallows
 docs/roadmap.md and pyproject.toml's `main_file` setting for how the
 fixture finds the dashboard app under test.
 
-A core-only install (`pip install .` / `.[dev]`, no `[ui]`) has no
+A core-only install (`pip install .` / `.[integration-layer]`, no
+`[ui]`) has no
 nicegui -- skip the plugin and the dashboard-only test file instead of
 failing collection, so the API/tools/agent layer's own test suite still
 runs standalone.
