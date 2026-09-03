@@ -1,11 +1,33 @@
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 
+from apm.config import Settings
 from apm.state.store import StateStore
+from apm.tools import excel_file_tool as excel_file_tool_module
 from apm.tools.base import Capability
-from apm.tools.excel_file_tool import ExcelFileTool, LocalWorkbookSource
+from apm.tools.excel_file_tool import (
+    ExcelFileTool,
+    LocalWorkbookSource,
+    build_configured_excel_tool,
+)
+
+
+def _settings(*, excel_workbook_path: str | None = None, excel_drive_file_id: str | None = None) -> Settings:
+    return Settings(
+        anthropic_api_key=None,
+        anthropic_model=None,
+        google_client_id=None,
+        google_client_secret=None,
+        ms_graph_client_id=None,
+        ms_graph_client_secret=None,
+        ms_graph_tenant_id=None,
+        excel_workbook_path=excel_workbook_path,
+        excel_drive_file_id=excel_drive_file_id,
+        state_dir=Path("state"),
+    )
 
 
 class FakeWorkbookSource:
@@ -176,3 +198,50 @@ def test_local_workbook_source_round_trips(tmp_path: Path) -> None:
 
     source.write_bytes(b"new-bytes")
     assert path.read_bytes() == b"new-bytes"
+
+
+def test_build_configured_excel_tool_returns_none_when_unconfigured(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    assert build_configured_excel_tool(store, _settings()) is None
+
+
+def test_build_configured_excel_tool_raises_when_both_are_set(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    settings = _settings(excel_workbook_path="./workbook.xlsx", excel_drive_file_id="some-file-id")
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        build_configured_excel_tool(store, settings)
+
+
+def test_build_configured_excel_tool_builds_local_tool_from_path(tmp_path: Path) -> None:
+    path = tmp_path / "workbook.xlsx"
+    path.write_bytes(_sample_workbook_bytes())
+    store = StateStore(tmp_path / "state.json")
+
+    tool = build_configured_excel_tool(store, _settings(excel_workbook_path=str(path)))
+
+    assert isinstance(tool, ExcelFileTool)
+    assert tool.list_worksheets("order-1") == ["Renewals", "Orders"]
+
+
+def test_build_configured_excel_tool_builds_drive_tool_from_file_id(tmp_path: Path, monkeypatch) -> None:
+    """Doesn't touch real Google OAuth/Drive -- monkeypatches
+    build_gdrive_excel_tool (looked up at call time via the module, so
+    this substitution takes effect) to confirm build_configured_excel_tool
+    reaches it with the right file id, without any network call.
+    """
+    store = StateStore(tmp_path / "state.json")
+    calls: list[tuple[object, object, str]] = []
+
+    def fake_build_gdrive_excel_tool(state, settings, file_id):
+        calls.append((state, settings, file_id))
+        return "fake-tool"
+
+    monkeypatch.setattr(excel_file_tool_module, "build_gdrive_excel_tool", fake_build_gdrive_excel_tool)
+
+    result = build_configured_excel_tool(store, _settings(excel_drive_file_id="some-file-id"))
+
+    assert result == "fake-tool"
+    assert len(calls) == 1
+    assert calls[0][0] is store
+    assert calls[0][2] == "some-file-id"

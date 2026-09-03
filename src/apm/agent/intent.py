@@ -27,6 +27,7 @@ class ParsedIntent:
     process_id: str
     gmail_query: str | None = None
     calendar_query: str | None = None
+    excel_query: bool = False
 
 
 class IntentParser(Protocol):
@@ -35,7 +36,8 @@ class IntentParser(Protocol):
 
 SYSTEM_PROMPT = """You turn a business user's free-text request into the \
 structured input APM's agent needs to look into it: a process id plus a \
-Gmail search query and/or a Calendar search query.
+Gmail search query, a Calendar search query, and/or a signal to check a \
+connected Excel workbook.
 
 You will be given the request text and a list of process ids already in \
 use (each one identifies an order/case/deal APM has looked into before).
@@ -59,16 +61,28 @@ relevant to the request.
 would find the calendar events relevant to this request, e.g. "renewal" \
 or "Acme". Set it to null if calendar isn't relevant to the request.
 
-At least one of gmail_query / calendar_query must be non-null — pick \
-whichever tool(s) the request is actually about; use both if the request \
-plausibly needs both.
+4. Choose excel_query: true if the request is plausibly about \
+tabular/spreadsheet data — an invoice tracker, a renewals sheet, a table \
+of orders, or any request phrased as "check the tracker/sheet/workbook \
+for X" — false otherwise. You cannot see the workbook's actual sheet \
+names or layout, so this is only a yes/no signal to look at it, not a \
+choice of which sheet or cells; default to false unless the request \
+genuinely sounds like it concerns spreadsheet data. A configured \
+workbook may or may not actually exist on the running system — setting \
+this true when it doesn't is harmless, so lean toward true on a \
+plausible match rather than guessing false to be safe.
+
+At least one of gmail_query / calendar_query / excel_query must be \
+non-null/true — pick whichever tool(s) the request is actually about; \
+use more than one if the request plausibly needs them.
 
 Respond with ONLY a JSON object of this exact shape, no other text before \
 or after it:
 {
   "process_id": "...",
   "gmail_query": "..." | null,
-  "calendar_query": "..." | null
+  "calendar_query": "..." | null,
+  "excel_query": true | false
 }
 """
 
@@ -121,6 +135,12 @@ def parse_intent_response(text: str) -> ParsedIntent:
     data = json.loads(strip_code_fence(text.strip()))
     gmail_query = data.get("gmail_query") or None
     calendar_query = data.get("calendar_query") or None
-    if gmail_query is None and calendar_query is None:
-        raise ValueError("intent parsing produced neither a gmail_query nor a calendar_query")
-    return ParsedIntent(process_id=data["process_id"], gmail_query=gmail_query, calendar_query=calendar_query)
+    excel_query = bool(data.get("excel_query"))
+    if gmail_query is None and calendar_query is None and not excel_query:
+        raise ValueError("intent parsing produced no gmail_query, calendar_query, or excel_query")
+    return ParsedIntent(
+        process_id=data["process_id"],
+        gmail_query=gmail_query,
+        calendar_query=calendar_query,
+        excel_query=excel_query,
+    )

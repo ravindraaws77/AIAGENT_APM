@@ -22,6 +22,7 @@ from apm.agent.intent import ClaudeIntentParser
 from apm.agent.reasoner import ClaudeReasoner
 from apm.config import load_settings
 from apm.state.store import StateStore
+from apm.tools.excel_file_tool import build_configured_excel_tool
 from apm.tools.google_auth import build_gmail_and_calendar_tools
 
 
@@ -36,6 +37,9 @@ def get_graph():
     state = get_state_store()
     gmail_tool, calendar_tool = build_gmail_and_calendar_tools(state, settings)
     tools = {"gmail": gmail_tool, "google_calendar": calendar_tool}
+    excel_tool = build_configured_excel_tool(state, settings)
+    if excel_tool is not None:
+        tools["excel_file"] = excel_tool
     reasoner = ClaudeReasoner(settings)
     return build_graph(tools, reasoner, state, checkpointer=MemorySaver())
 

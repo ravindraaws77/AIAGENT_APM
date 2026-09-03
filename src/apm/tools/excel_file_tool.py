@@ -302,3 +302,35 @@ def build_gdrive_excel_tool(
 
     credentials = load_credentials(settings, scopes=[GOOGLE_DRIVE_SCOPE], token_path=token_path)
     return ExcelFileTool(state, GoogleDriveWorkbookSource(credentials, file_id))
+
+
+def build_configured_excel_tool(state: StateStore, settings: Settings) -> ExcelFileTool | None:
+    """Build the one Excel workbook the running server is configured for,
+    same "the account" spirit as Gmail/Calendar's build_gmail_and_calendar_tools
+    -- unlike those, Excel has no single obvious "the workbook", so this
+    is chosen via env vars (see .env.example) rather than assumed:
+
+    - APM_EXCEL_WORKBOOK_PATH: a local .xlsx path -> build_local_excel_tool.
+    - APM_EXCEL_DRIVE_FILE_ID: a literal Drive file id (not a name --
+      unlike scripts/excel_file_demo.py's CLI, there's no interactive
+      moment here to disambiguate multiple files sharing a name; find
+      the id with that script's `gdrive --list`) -> build_gdrive_excel_tool
+      (this one runs the Google OAuth flow, so only reachable if actually
+      configured).
+
+    Returns None if neither is set -- the API/UI then simply has no
+    "excel_file" tool available, and the agent graph already treats an
+    absent tool as "don't fetch/offer it" (see fetch_node/execute_node).
+    Raises ValueError if both are set, rather than silently preferring
+    one -- an ambiguous config is a mistake to fix, not guess through.
+    """
+    if settings.excel_workbook_path and settings.excel_drive_file_id:
+        raise ValueError(
+            "Both APM_EXCEL_WORKBOOK_PATH and APM_EXCEL_DRIVE_FILE_ID are set -- "
+            "the configured Excel workbook is ambiguous. Set only one."
+        )
+    if settings.excel_workbook_path:
+        return build_local_excel_tool(state, settings.excel_workbook_path)
+    if settings.excel_drive_file_id:
+        return build_gdrive_excel_tool(state, settings, file_id=settings.excel_drive_file_id)
+    return None
