@@ -9,7 +9,7 @@ Setup (one-time):
      Delegated -> Files.Read -> grant admin consent if required.
   2. Copy .env.example to .env, fill in MS_GRAPH_CLIENT_ID / MS_GRAPH_TENANT_ID
      (MS_GRAPH_CLIENT_SECRET is not needed for this device-code flow).
-  3. pip install -e .  &&  pip install -r requirements.txt
+  3. pip install -e .
   4. Put a workbook (.xlsx) in the OneDrive of the account you'll sign in
      with, with at least one worksheet and some data.
 
