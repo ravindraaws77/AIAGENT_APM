@@ -23,3 +23,8 @@ httpx>=0.27
 
 # Phase 6b: NiceGUI frontend.
 nicegui>=1.4
+
+# Local/Google Drive Excel connector: parses/edits .xlsx bytes directly
+# (no cell-range API on either source, unlike Graph's Excel API). Drive
+# access itself reuses google-api-python-client above.
+openpyxl>=3.1
