@@ -85,6 +85,30 @@ def test_read_range_returns_values_and_logs(tmp_path: Path) -> None:
     assert any(e["details"].get("row_count") == 2 for e in read_events)
 
 
+def test_read_range_defaults_to_first_sheet_and_used_range(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    source = FakeWorkbookSource(_sample_workbook_bytes())
+    tool = ExcelFileTool(store, source)
+
+    data = tool.read_range("order-123")
+
+    assert data.sheet_name == "Renewals"
+    assert data.address == "A1:B2"
+    assert data.values == [["Customer", "RenewalDate"], ["Acme Corp", "2026-10-01"]]
+
+
+def test_read_range_default_address_with_explicit_sheet(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    source = FakeWorkbookSource(_sample_workbook_bytes())
+    tool = ExcelFileTool(store, source)
+
+    data = tool.read_range("order-123", sheet_name="Orders")
+
+    assert data.sheet_name == "Orders"
+    assert data.address == "A1:A1"  # empty sheet -- openpyxl's default dimensions
+    assert data.values == [[None]]
+
+
 def test_read_range_single_cell_address(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.json")
     source = FakeWorkbookSource(_sample_workbook_bytes())
