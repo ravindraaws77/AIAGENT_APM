@@ -94,6 +94,22 @@ def resolve_drive_file_id(file_id_or_name: str) -> str:
     return matches[0]["id"]
 
 
+def build_tool(mode: str, file_id_or_name: str):
+    """Resolve `mode` ("local" or "gdrive") + a path/id/name to a built
+    ExcelFileTool. Shared with scripts/excel_file_write_demo.py so the
+    local-vs-Drive resolution logic (including Drive name lookup) lives
+    in exactly one place.
+    """
+    store = StateStore()
+    if mode == "local":
+        return build_local_excel_tool(store, file_id_or_name)
+    if mode == "gdrive":
+        file_id = resolve_drive_file_id(file_id_or_name)
+        settings = load_settings()
+        return build_gdrive_excel_tool(store, settings, file_id=file_id)
+    raise ValueError(f"unknown mode: {mode!r} (expected 'local' or 'gdrive')")
+
+
 def run(tool, sheet_name: str | None, address: str | None) -> None:
     # Not tool.health_check() -- it deliberately swallows the real
     # exception (see BaseTool.health_check's docstring: "must never
@@ -130,8 +146,7 @@ def main() -> None:
         path, *optional = rest
         sheet_name = optional[0] if len(optional) > 0 else None
         address = optional[1] if len(optional) > 1 else None
-        store = StateStore()
-        run(build_local_excel_tool(store, path), sheet_name, address)
+        run(build_tool("local", path), sheet_name, address)
         return
 
     if mode == "gdrive":
@@ -144,10 +159,7 @@ def main() -> None:
         file_id_or_name, *optional = rest
         sheet_name = optional[0] if len(optional) > 0 else None
         address = optional[1] if len(optional) > 1 else None
-        file_id = resolve_drive_file_id(file_id_or_name)
-        settings = load_settings()
-        store = StateStore()
-        run(build_gdrive_excel_tool(store, settings, file_id=file_id), sheet_name, address)
+        run(build_tool("gdrive", file_id_or_name), sheet_name, address)
         return
 
     print(__doc__)
