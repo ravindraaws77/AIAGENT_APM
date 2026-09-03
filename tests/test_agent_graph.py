@@ -24,13 +24,17 @@ from tests.test_gmail_tool import FakeGmailClient
 class FakeReasoner:
     """Returns a pre-set ReasoningResult regardless of input — lets tests
     control exactly what the "intelligence layer" proposes without any
-    API call.
+    API call. Records each call's (process_id, context, request_text) so
+    tests can assert on what actually reached the reasoner -- notably
+    whether request_text (the user's own free-text ask) got through.
     """
 
     def __init__(self, result: ReasoningResult) -> None:
         self._result = result
+        self.calls: list[tuple[str, dict[str, Any], str | None]] = []
 
-    def reason(self, process_id: str, context: dict[str, Any]) -> ReasoningResult:
+    def reason(self, process_id: str, context: dict[str, Any], request_text: str | None = None) -> ReasoningResult:
+        self.calls.append((process_id, context, request_text))
         return self._result
 
 
@@ -44,7 +48,7 @@ def _build(tmp_path: Path, reasoning_result: ReasoningResult):
     tools = {"gmail": gmail_tool, "google_calendar": calendar_tool}
     reasoner = FakeReasoner(reasoning_result)
     graph = build_graph(tools, reasoner, store, checkpointer=MemorySaver())
-    return graph, store, gmail_client, calendar_client
+    return graph, store, gmail_client, calendar_client, reasoner
 
 
 def _build_with_excel(tmp_path: Path, reasoning_result: ReasoningResult):
@@ -63,11 +67,11 @@ def _build_with_excel(tmp_path: Path, reasoning_result: ReasoningResult):
     tools = {"gmail": gmail_tool, "google_calendar": calendar_tool, "excel_file": excel_tool}
     reasoner = FakeReasoner(reasoning_result)
     graph = build_graph(tools, reasoner, store, checkpointer=MemorySaver())
-    return graph, store, gmail_client, calendar_client, excel_source
+    return graph, store, gmail_client, calendar_client, excel_source, reasoner
 
 
 def test_no_proposed_action_runs_straight_through(tmp_path: Path) -> None:
-    graph, store, gmail_client, _ = _build(
+    graph, store, gmail_client, _, _ = _build(
         tmp_path, ReasoningResult(summary="Everything is on track.", proposed_action=None)
     )
 
@@ -89,7 +93,7 @@ def test_proposed_action_pauses_for_approval(tmp_path: Path) -> None:
         description="Send a follow-up email about the delay",
         payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
     )
-    graph, store, gmail_client, _ = _build(
+    graph, store, gmail_client, _, _ = _build(
         tmp_path, ReasoningResult(summary="There is a delay.", proposed_action=proposed)
     )
 
@@ -112,7 +116,7 @@ def test_approval_executes_the_action(tmp_path: Path) -> None:
         description="Send a follow-up email about the delay",
         payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
     )
-    graph, store, gmail_client, _ = _build(
+    graph, store, gmail_client, _, _ = _build(
         tmp_path, ReasoningResult(summary="There is a delay.", proposed_action=proposed)
     )
 
@@ -141,7 +145,7 @@ def test_rejection_does_not_execute_the_action(tmp_path: Path) -> None:
         description="Create a renewal reminder",
         payload={"title": "Renewal call", "start": "2026-09-10T15:00:00Z", "end": "2026-09-10T15:30:00Z"},
     )
-    graph, store, _, calendar_client = _build(
+    graph, store, _, calendar_client, _ = _build(
         tmp_path, ReasoningResult(summary="Renewal is coming up.", proposed_action=proposed)
     )
 
@@ -164,7 +168,7 @@ def test_category_flows_through_to_pending_action_and_status(tmp_path: Path) -> 
         description="Send a follow-up email about the delay",
         payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
     )
-    graph, store, _, _ = _build(
+    graph, store, _, _, _ = _build(
         tmp_path,
         ReasoningResult(summary="There is a delay.", proposed_action=proposed, category="shipment_delay"),
     )
@@ -182,7 +186,7 @@ def test_business_scenario_renewal_tracker_read_feeds_status(tmp_path: Path) -> 
     fetched range should show up in persisted status the same way a
     Gmail search or Calendar search does.
     """
-    graph, store, _, _, _ = _build_with_excel(
+    graph, store, _, _, _, _ = _build_with_excel(
         tmp_path, ReasoningResult(summary="Acme Corp's renewal is due soon.", proposed_action=None)
     )
 
@@ -211,7 +215,7 @@ def test_business_scenario_renewal_tracker_update_approved(tmp_path: Path) -> No
         description="Mark Acme Corp's renewal as contacted in the tracker",
         payload={"sheet_name": "Renewals", "address": "B2", "values": [["Contacted 2026-09-03"]]},
     )
-    graph, store, _, _, excel_source = _build_with_excel(
+    graph, store, _, _, excel_source, _ = _build_with_excel(
         tmp_path,
         ReasoningResult(
             summary="Acme Corp's renewal is due soon; logging outreach.",
@@ -247,7 +251,7 @@ def test_business_scenario_renewal_tracker_update_rejected(tmp_path: Path) -> No
         description="Mark Acme Corp's renewal as contacted in the tracker",
         payload={"sheet_name": "Renewals", "address": "B2", "values": [["Contacted 2026-09-03"]]},
     )
-    graph, store, _, _, excel_source = _build_with_excel(
+    graph, store, _, _, excel_source, _ = _build_with_excel(
         tmp_path,
         ReasoningResult(summary="Acme Corp's renewal is due soon.", proposed_action=proposed, category="renewal_reminder"),
     )
@@ -263,10 +267,46 @@ def test_business_scenario_renewal_tracker_update_rejected(tmp_path: Path) -> No
     assert not any(e["event_type"] == "action_executed" for e in events)
 
 
+def test_start_process_passes_request_text_to_the_reasoner(tmp_path: Path) -> None:
+    """Regression guard for a real bug: /query used to resolve the
+    user's free-text ask (e.g. "update order 223's status to Paid") to a
+    process id + queries and then discard the text itself -- the
+    reasoner only ever saw the fetched data, with no way to distinguish
+    "update this" from a plain "check on this", so it fell back to
+    guessing its own idea of a helpful action instead of doing what was
+    asked. start_process now threads request_text through to
+    reason_node, which passes it to Reasoner.reason as a third argument.
+    """
+    graph, store, _, _, reasoner = _build(
+        tmp_path, ReasoningResult(summary="x", proposed_action=None)
+    )
+
+    start_process(graph, "order-223", queries={}, request_text="update order 223's status to Paid")
+
+    assert len(reasoner.calls) == 1
+    _process_id, _context, request_text = reasoner.calls[0]
+    assert request_text == "update order 223's status to Paid"
+
+
+def test_start_process_request_text_defaults_to_none(tmp_path: Path) -> None:
+    """The /start endpoint (explicit gmail_query/calendar_query fields,
+    no free-text box) has no request_text to give -- confirms the
+    reasoner still gets called correctly, with None, rather than this
+    becoming a required argument that breaks that path.
+    """
+    graph, store, _, _, reasoner = _build(
+        tmp_path, ReasoningResult(summary="x", proposed_action=None)
+    )
+
+    start_process(graph, "order-1", queries={})
+
+    assert reasoner.calls[0][2] is None
+
+
 def test_fetch_node_calls_configured_tools_and_persists_status(tmp_path: Path) -> None:
     from tests.test_gmail_tool import _raw_message
 
-    graph, store, gmail_client, _ = _build(
+    graph, store, gmail_client, _, _ = _build(
         tmp_path, ReasoningResult(summary="No issues found.", proposed_action=None)
     )
     gmail_client._messages["m1"] = _raw_message(  # noqa: SLF001 - test setup convenience

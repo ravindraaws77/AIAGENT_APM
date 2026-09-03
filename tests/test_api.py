@@ -56,14 +56,15 @@ def _client(
     if with_excel:
         excel_source = FakeWorkbookSource(_sample_workbook_bytes())
         tools["excel_file"] = ExcelFileTool(store, excel_source)
-    graph = build_graph(tools, FakeReasoner(reasoning_result), store, checkpointer=MemorySaver())
+    reasoner = FakeReasoner(reasoning_result)
+    graph = build_graph(tools, reasoner, store, checkpointer=MemorySaver())
 
     app = create_app()
     app.dependency_overrides[get_graph] = lambda: graph
     app.dependency_overrides[get_state_store] = lambda: store
     if intent_parser is not None:
         app.dependency_overrides[get_intent_parser] = lambda: intent_parser
-    return TestClient(app), store, gmail_client, calendar_client, excel_source
+    return TestClient(app), store, gmail_client, calendar_client, excel_source, reasoner
 
 
 def test_health() -> None:
@@ -80,7 +81,7 @@ def test_start_process_requires_a_query(tmp_path: Path) -> None:
 
 
 def test_start_process_with_no_proposed_action(tmp_path: Path) -> None:
-    client, store, gmail_client, _, _ = _client(
+    client, store, gmail_client, _, _, _ = _client(
         tmp_path, ReasoningResult(summary="Everything is on track.", proposed_action=None)
     )
 
@@ -101,7 +102,7 @@ def test_full_approval_flow_through_the_api(tmp_path: Path) -> None:
         description="Send a follow-up email about the delay",
         payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
     )
-    client, store, gmail_client, _, _ = _client(
+    client, store, gmail_client, _, _, _ = _client(
         tmp_path, ReasoningResult(summary="There is a delay.", proposed_action=proposed)
     )
 
@@ -131,7 +132,7 @@ def test_rejection_through_the_api_does_not_execute(tmp_path: Path) -> None:
         description="Create a renewal reminder",
         payload={"title": "Renewal call", "start": "2026-09-10T15:00:00Z", "end": "2026-09-10T15:30:00Z"},
     )
-    client, store, _, calendar_client, _ = _client(
+    client, store, _, calendar_client, _, _ = _client(
         tmp_path, ReasoningResult(summary="Renewal is coming up.", proposed_action=proposed)
     )
 
@@ -204,7 +205,7 @@ def test_start_returns_clean_502_on_upstream_failure(tmp_path: Path) -> None:
 
 def test_query_resolves_intent_and_runs_the_graph(tmp_path: Path) -> None:
     intent_parser = FakeIntentParser(ParsedIntent(process_id="order-4521", gmail_query="order 4521"))
-    client, store, gmail_client, _, _ = _client(
+    client, store, gmail_client, _, _, _ = _client(
         tmp_path,
         ReasoningResult(summary="Order 4521 is on track.", proposed_action=None),
         intent_parser=intent_parser,
@@ -222,6 +223,31 @@ def test_query_resolves_intent_and_runs_the_graph(tmp_path: Path) -> None:
     # The gmail_query the fake intent parser resolved reached the real tool.
     events = store.list_events("order-4521")
     assert any(e["event_type"] == "read" and e["details"]["query"] == "order 4521" for e in events)
+
+
+def test_query_passes_the_users_text_to_the_reasoner_as_request_text(tmp_path: Path) -> None:
+    """Regression guard for a real bug: /query used to resolve the
+    user's free-text ask to a process id + queries via the intent
+    parser and then discard the text itself -- the reasoner never saw
+    it, only the fetched data, so it had no way to act on a specific
+    instruction like "update order 223's status to Paid" rather than
+    just guessing its own idea of a helpful action.
+    """
+    intent_parser = FakeIntentParser(
+        ParsedIntent(process_id="order-223", gmail_query=None, calendar_query=None, excel_query=True)
+    )
+    client, store, _, _, _, reasoner = _client(
+        tmp_path,
+        ReasoningResult(summary="x", proposed_action=None),
+        intent_parser=intent_parser,
+        with_excel=True,
+    )
+
+    client.post("/query", json={"text": "update order 223's status to Paid"})
+
+    assert len(reasoner.calls) == 1
+    _process_id, _context, request_text = reasoner.calls[0]
+    assert request_text == "update order 223's status to Paid"
 
 
 def test_query_passes_known_process_ids_to_the_intent_parser(tmp_path: Path) -> None:

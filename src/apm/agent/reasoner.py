@@ -34,7 +34,9 @@ class ReasoningResult:
 
 
 class Reasoner(Protocol):
-    def reason(self, process_id: str, context: dict[str, Any]) -> ReasoningResult: ...
+    def reason(
+        self, process_id: str, context: dict[str, Any], request_text: str | None = None
+    ) -> ReasoningResult: ...
 
 
 SYSTEM_PROMPT = """You are the reasoning layer of APM (Agentic Process \
@@ -43,15 +45,30 @@ process (e.g. order-to-renewal) across email, calendar, and spreadsheet \
 tools, without them having to operate each tool by hand.
 
 You will be given the data the agent has just read from those tools for \
-one process. Do two things:
+one process, and — when the person typed a specific free-text request \
+rather than just asking to check on something — that request verbatim. \
+Do two things:
 
 1. Write a short, plain-language summary of the current state for a \
 business user — no jargon, 2-4 sentences.
 
-2. If, and only if, a concrete next action would genuinely help (e.g. a \
-follow-up email about a delay, a reminder event for a renewal call, \
-logging a row in a tracker), propose exactly ONE action. If nothing \
-useful needs to happen right now, propose none — do not invent busywork.
+2. Propose exactly ONE next action if one is warranted; propose none if \
+not. Two cases:
+   - A request was given: it tells you the goal. Propose the action \
+that directly fulfills it (e.g. "update order 223's status to Paid" -> \
+propose write_range setting that order's status cell to "Paid"), not a \
+different action you independently think would help more, as long as \
+you can support every value it needs from the fetched data (see the \
+"never invent" rule below). If the fetched data can't support the \
+request at all (e.g. it asks to update a workbook but no spreadsheet \
+was fetched, or asks to update an order that isn't in the fetched data), \
+propose nothing and say exactly what's missing in the summary — do not \
+substitute a different action instead of what was actually asked for.
+   - No request was given (e.g. a plain "check on order 4521"): infer \
+whatever concrete next action would genuinely help from the fetched \
+data alone (e.g. a follow-up email about a delay, a reminder event for \
+a renewal call, logging a row in a tracker). If nothing useful needs to \
+happen right now, propose none — do not invent busywork.
 
 Never invent contact details. Every value in a proposed action's payload \
 — an email address, a name, a date, an attendee — must come from the \
@@ -121,9 +138,10 @@ class ClaudeReasoner:
         self._settings = settings
         self._model = model or settings.anthropic_model or DEFAULT_MODEL
 
-    def reason(self, process_id: str, context: dict[str, Any]) -> ReasoningResult:
+    def reason(self, process_id: str, context: dict[str, Any], request_text: str | None = None) -> ReasoningResult:
         import anthropic
 
+        request_section = f"User's request: {request_text}\n\n" if request_text else ""
         client = anthropic.Anthropic(api_key=self._settings.anthropic_api_key)
         response = client.messages.create(
             model=self._model,
@@ -133,7 +151,7 @@ class ClaudeReasoner:
                 {
                     "role": "user",
                     "content": (
-                        f"Process id: {process_id}\n\nFetched data:\n"
+                        f"Process id: {process_id}\n\n{request_section}Fetched data:\n"
                         f"{json.dumps(context, indent=2, default=str)}"
                     ),
                 }

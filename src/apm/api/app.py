@@ -68,10 +68,14 @@ def create_app() -> FastAPI:
     ) -> RunOutcomeResponse:
         """The single free-text entry point: resolves `body.text` to a
         process id + Gmail/Calendar queries and/or an Excel signal
-        (apm.agent.intent), then runs the same graph /start does. Known
-        process ids are passed to the parser so it can recognize a
-        request that continues an existing order/case instead of always
-        minting a new id.
+        (apm.agent.intent), then runs the same graph /start does — passing
+        `body.text` itself through as `request_text` too, so the reasoner
+        acts on what was actually asked for (e.g. "update order 223's
+        status to Paid") instead of only guessing a helpful action from
+        the fetched data, which has no way to distinguish "check on this"
+        from a specific instruction. Known process ids are passed to the
+        parser so it can recognize a request that continues an existing
+        order/case instead of always minting a new id.
         """
         known_process_ids = [process["process_id"] for process in store.list_processes()]
         try:
@@ -81,7 +85,7 @@ def create_app() -> FastAPI:
 
         queries = _build_queries(intent.gmail_query, intent.calendar_query, excel_query=intent.excel_query)
         try:
-            outcome = start_process(graph, intent.process_id, queries)
+            outcome = start_process(graph, intent.process_id, queries, request_text=body.text)
         except Exception as exc:
             raise _upstream_error(exc) from exc
         return _to_response(outcome)

@@ -12,7 +12,7 @@ credentials or API key. See tests/test_agent_graph.py.
 Usage (see scripts/agent_demo.py for a full example):
 
     graph = build_graph(tools, reasoner, state_store)
-    result = start_process(graph, process_id, queries)
+    result = start_process(graph, process_id, queries, request_text)
     if result.pending_action:
         ...show result.pending_action to a human, get a decision...
         result = resume_process(graph, process_id, approved=True)
@@ -35,6 +35,7 @@ from apm.tools.base import BaseTool
 class GraphState(TypedDict, total=False):
     process_id: str
     queries: dict[str, dict[str, Any]]
+    request_text: str | None
     fetched: dict[str, Any]
     summary: str
     category: str
@@ -102,7 +103,7 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
 
     def reason_node(state: GraphState) -> dict[str, Any]:
         process_id = state["process_id"]
-        result = reasoner.reason(process_id, state.get("fetched", {}))
+        result = reasoner.reason(process_id, state.get("fetched", {}), state.get("request_text"))
         proposed = (
             {
                 "tool": result.proposed_action.tool,
@@ -205,12 +206,22 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
     return graph.compile(checkpointer=checkpointer)
 
 
-def start_process(graph: Any, process_id: str, queries: dict[str, dict[str, Any]]) -> RunOutcome:
+def start_process(
+    graph: Any, process_id: str, queries: dict[str, dict[str, Any]], request_text: str | None = None
+) -> RunOutcome:
     """Run the graph from the start for one process. Returns a paused
     RunOutcome (pending_action set) if a proposal needs approval, or a
     finished one (final_result set) if the reasoner proposed nothing.
+
+    `request_text` is the user's own free-text ask, if there was one
+    (apm.api.app's /query route; /start has no equivalent, since it's
+    driven by explicit query fields instead of a sentence) — passed
+    through to the reasoner (reason_node) so it can act on what was
+    actually asked for rather than only inferring "what would help" from
+    the fetched data alone. Optional and defaults to None: the reasoner
+    still works from fetched data alone when there's nothing to pass.
     """
-    initial_state: GraphState = {"process_id": process_id, "queries": queries}
+    initial_state: GraphState = {"process_id": process_id, "queries": queries, "request_text": request_text}
     result = graph.invoke(initial_state, config=_config(process_id))
     return _to_outcome(process_id, result)
 
