@@ -95,11 +95,19 @@ def resolve_drive_file_id(file_id_or_name: str) -> str:
 
 
 def run(tool, sheet_name: str | None, address: str | None) -> None:
-    if not tool.health_check():
-        print("Excel file connector health check failed — check the path/file id and credentials.")
+    # Not tool.health_check() -- it deliberately swallows the real
+    # exception (see BaseTool.health_check's docstring: "must never
+    # raise"), which is right for a UI connectivity indicator but
+    # useless for diagnosing a failure at the terminal. Call the real
+    # method and let the actual error (e.g. googleapiclient's HttpError,
+    # with its status code and message) print instead.
+    try:
+        worksheets = tool.list_worksheets(process_id="demo")
+    except Exception as exc:
+        print(f"Failed to read the workbook: {type(exc).__name__}: {exc}")
         return
 
-    print(f"Worksheets: {tool.list_worksheets(process_id='demo')}\n")
+    print(f"Worksheets: {worksheets}\n")
 
     data = tool.read_range(process_id="demo", sheet_name=sheet_name, address=address)
     print(f"{data.sheet_name}!{data.address}")
