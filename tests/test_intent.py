@@ -1,6 +1,6 @@
 import pytest
 
-from apm.agent.intent import parse_intent_response
+from apm.agent.intent import SYSTEM_PROMPT, parse_intent_response
 
 
 def test_parse_intent_with_gmail_and_calendar_query() -> None:
@@ -74,6 +74,18 @@ def test_parse_intent_excel_query_alone_satisfies_the_at_least_one_requirement()
     result = parse_intent_response(text)  # must not raise
 
     assert result.process_id == "acme-invoices"
+
+
+def test_system_prompt_covers_write_phrased_excel_requests() -> None:
+    """Companion to test_reasoner.py's excel_file regression guard: a
+    request like "update order 223's status to Paid" needs excel_query
+    set true to ever reach the spreadsheet in the first place. The
+    original wording only gave "check the tracker for X"-style examples,
+    which skews the model toward treating an update-phrased request as
+    Gmail/Calendar-relevant instead.
+    """
+    assert "excel_query" in SYSTEM_PROMPT
+    assert "status to Paid" in SYSTEM_PROMPT
 
 
 def test_parse_intent_wrapped_in_markdown_code_fence() -> None:
