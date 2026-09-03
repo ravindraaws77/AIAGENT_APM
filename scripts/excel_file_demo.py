@@ -15,14 +15,19 @@ Local file usage (no credentials needed):
 Google Drive usage:
   Setup (one-time): copy .env.example to .env, fill in GOOGLE_CLIENT_ID /
   GOOGLE_CLIENT_SECRET (Google Cloud Console -> enable the Drive API on
-  the same OAuth client used for Gmail/Calendar). First run opens a
-  browser consent screen and caches a token locally
-  (.google_drive_token.json, gitignored).
+  the same OAuth client used for Gmail/Calendar).
 
-  # Find the Drive file id of an .xlsx file (from its Drive share URL,
-  # or list files with --list):
+  # <file> can be either a Drive file id, or the file's name (e.g.
+  # "APM_Invoice_Details.xlsx") -- a name is resolved to an id via a
+  # Drive search first. First run of each opens its own browser consent
+  # screen (name search needs a broader scope than reading/writing the
+  # one file you land on -- see DEFAULT_DRIVE_READONLY_TOKEN_PATH's
+  # docstring in excel_file_tool.py) and caches a token locally
+  # (.google_drive_token.json / .google_drive_readonly_token.json,
+  # gitignored). If more than one file shares that name, the first
+  # match wins -- use --list or the file id to be unambiguous.
   python scripts/excel_file_demo.py gdrive --list
-  python scripts/excel_file_demo.py gdrive <file_id> [sheet_name] [range_address]
+  python scripts/excel_file_demo.py gdrive <file_id_or_name> [sheet_name] [range_address]
 
 Both modes only call read-only methods here — nothing is written to the
 workbook.
@@ -41,32 +46,68 @@ from apm.tools.excel_file_tool import (
 )
 
 
-def list_drive_files() -> None:
-    from apm.tools.excel_file_tool import DEFAULT_DRIVE_TOKEN_PATH, EXCEL_MIME_TYPE
+def _drive_service():
+    from apm.tools.excel_file_tool import DEFAULT_DRIVE_READONLY_TOKEN_PATH
     from apm.tools.google_auth import load_credentials
+    from googleapiclient.discovery import build
 
     settings = load_settings()
     credentials = load_credentials(
-        settings, scopes=[GOOGLE_DRIVE_READONLY_SCOPE], token_path=DEFAULT_DRIVE_TOKEN_PATH
+        settings, scopes=[GOOGLE_DRIVE_READONLY_SCOPE], token_path=DEFAULT_DRIVE_READONLY_TOKEN_PATH
     )
-    from googleapiclient.discovery import build
+    return build("drive", "v3", credentials=credentials)
 
-    service = build("drive", "v3", credentials=credentials)
-    response = (
-        service.files()
-        .list(q=f"mimeType='{EXCEL_MIME_TYPE}'", fields="files(id, name)")
-        .execute()
-    )
+
+def list_drive_files() -> None:
+    from apm.tools.excel_file_tool import EXCEL_MIME_TYPE
+
+    response = _drive_service().files().list(q=f"mimeType='{EXCEL_MIME_TYPE}'", fields="files(id, name)").execute()
     for item in response.get("files", []):
         print(f"{item['id']}  {item['name']}")
 
 
+def resolve_drive_file_id(file_id_or_name: str) -> str:
+    """`file_id_or_name` can be a literal Drive file id, or a file name
+    (e.g. "APM_Invoice_Details.xlsx") to look up. A bare id has no dot
+    in it; a name does (its extension) -- that's the only signal we
+    have to tell them apart without an extra flag, so this treats
+    anything with a "." as a name to search for.
+    """
+    if "." not in file_id_or_name:
+        return file_id_or_name
+
+    escaped_name = file_id_or_name.replace("'", "\\'")
+    response = (
+        _drive_service()
+        .files()
+        .list(q=f"name = '{escaped_name}' and trashed = false", fields="files(id, name)")
+        .execute()
+    )
+    matches = response.get("files", [])
+    if not matches:
+        raise SystemExit(
+            f"No Drive file named {file_id_or_name!r} found (or it's trashed). "
+            "Run `python scripts/excel_file_demo.py gdrive --list` to see what's available."
+        )
+    if len(matches) > 1:
+        print(f"{len(matches)} files named {file_id_or_name!r} found -- using the first: {matches[0]['id']}")
+    return matches[0]["id"]
+
+
 def run(tool, sheet_name: str | None, address: str | None) -> None:
-    if not tool.health_check():
-        print("Excel file connector health check failed — check the path/file id and credentials.")
+    # Not tool.health_check() -- it deliberately swallows the real
+    # exception (see BaseTool.health_check's docstring: "must never
+    # raise"), which is right for a UI connectivity indicator but
+    # useless for diagnosing a failure at the terminal. Call the real
+    # method and let the actual error (e.g. googleapiclient's HttpError,
+    # with its status code and message) print instead.
+    try:
+        worksheets = tool.list_worksheets(process_id="demo")
+    except Exception as exc:
+        print(f"Failed to read the workbook: {type(exc).__name__}: {exc}")
         return
 
-    print(f"Worksheets: {tool.list_worksheets(process_id='demo')}\n")
+    print(f"Worksheets: {worksheets}\n")
 
     data = tool.read_range(process_id="demo", sheet_name=sheet_name, address=address)
     print(f"{data.sheet_name}!{data.address}")
@@ -100,9 +141,10 @@ def main() -> None:
         if not rest or len(rest) > 3:
             print(__doc__)
             return
-        file_id, *optional = rest
+        file_id_or_name, *optional = rest
         sheet_name = optional[0] if len(optional) > 0 else None
         address = optional[1] if len(optional) > 1 else None
+        file_id = resolve_drive_file_id(file_id_or_name)
         settings = load_settings()
         store = StateStore()
         run(build_gdrive_excel_tool(store, settings, file_id=file_id), sheet_name, address)

@@ -269,6 +269,16 @@ def build_local_excel_tool(state: StateStore, path: Path | str) -> ExcelFileTool
 
 DEFAULT_DRIVE_TOKEN_PATH = Path(".google_drive_token.json")
 
+# A separate cache from DEFAULT_DRIVE_TOKEN_PATH, deliberately -- same
+# reasoning as that constant's own docstring below: scripts/excel_file_demo.py
+# uses the broader drive.readonly scope (see GOOGLE_DRIVE_READONLY_SCOPE
+# above) to search/list files by name, since drive.file can only see
+# files this app created or the user explicitly picked with it. Caching
+# that consent under the same file as the narrow drive.file token used
+# to actually read/write a bound workbook would hit the exact
+# scope-mismatch problem load_credentials warns about.
+DEFAULT_DRIVE_READONLY_TOKEN_PATH = Path(".google_drive_readonly_token.json")
+
 
 def build_gdrive_excel_tool(
     state: StateStore, settings: Settings, file_id: str, token_path: Path = DEFAULT_DRIVE_TOKEN_PATH
