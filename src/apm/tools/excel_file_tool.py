@@ -102,20 +102,32 @@ class ExcelFileTool(BaseTool):
         )
         return names
 
-    def read_range(self, process_id: str, sheet_name: str, address: str) -> RangeData:
-        """Read a cell range (e.g. sheet_name="Renewals", address="A1:D20")
-        and return its values as a list of rows.
+    def read_range(
+        self, process_id: str, sheet_name: str | None = None, address: str | None = None
+    ) -> RangeData:
+        """Read a cell range and return its values as a list of rows.
+
+        Only the tool's workbook (set at construction time, e.g. a file
+        name via build_local_excel_tool) is required to read something
+        useful: `sheet_name` defaults to the workbook's first worksheet,
+        and `address` defaults to that worksheet's whole used range
+        (openpyxl's `dimensions`) — pass them explicitly (e.g.
+        sheet_name="Renewals", address="A1:D20") to read something more
+        specific.
         """
         workbook = self._load_workbook(data_only=True)
-        values = self._range_values(workbook[sheet_name], address)
-        data = RangeData(sheet_name=sheet_name, address=address, values=values)
+        resolved_sheet = sheet_name if sheet_name is not None else workbook.sheetnames[0]
+        worksheet = workbook[resolved_sheet]
+        resolved_address = address if address is not None else worksheet.dimensions
+        values = self._range_values(worksheet, resolved_address)
+        data = RangeData(sheet_name=resolved_sheet, address=resolved_address, values=values)
         self._log(
             process_id,
             "read",
-            f"Read range {sheet_name}!{address} ({len(values)} row(s)) from {self._source.describe()}",
+            f"Read range {resolved_sheet}!{resolved_address} ({len(values)} row(s)) from {self._source.describe()}",
             {
-                "sheet_name": sheet_name,
-                "address": address,
+                "sheet_name": resolved_sheet,
+                "address": resolved_address,
                 "row_count": len(values),
                 "source": self._source.describe(),
             },
