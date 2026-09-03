@@ -12,6 +12,7 @@ from apm.tools.excel_file_tool import (
     ExcelFileTool,
     LocalWorkbookSource,
     build_configured_excel_tool,
+    resolve_drive_file_id,
 )
 
 
@@ -245,3 +246,86 @@ def test_build_configured_excel_tool_builds_drive_tool_from_file_id(tmp_path: Pa
     assert len(calls) == 1
     assert calls[0][0] is store
     assert calls[0][2] == "some-file-id"
+
+
+class _FakeDriveFilesList:
+    def __init__(self, response: dict) -> None:
+        self._response = response
+
+    def execute(self) -> dict:
+        return self._response
+
+
+class _FakeDriveFiles:
+    def __init__(self, response: dict) -> None:
+        self._response = response
+
+    def list(self, **kwargs: object) -> _FakeDriveFilesList:
+        return _FakeDriveFilesList(self._response)
+
+
+class _FakeDriveService:
+    def __init__(self, response: dict) -> None:
+        self._response = response
+
+    def files(self) -> _FakeDriveFiles:
+        return _FakeDriveFiles(self._response)
+
+
+def _patch_drive_search(monkeypatch: pytest.MonkeyPatch, matches: list[dict]) -> None:
+    """resolve_drive_file_id lazily imports both google_auth.load_credentials
+    and googleapiclient.discovery.build inside its body -- monkeypatching
+    the module attributes here takes effect because a `from x import y`
+    executed at call time re-reads x's current attribute.
+    """
+    monkeypatch.setattr("apm.tools.google_auth.load_credentials", lambda *a, **k: object())
+    monkeypatch.setattr("googleapiclient.discovery.build", lambda *a, **k: _FakeDriveService({"files": matches}))
+
+
+def test_resolve_drive_file_id_returns_bare_id_unchanged(tmp_path: Path) -> None:
+    # No "." -- treated as an id already, no Drive search/network call.
+    assert resolve_drive_file_id(_settings(), "1AbCdEf-some-id_no-dot") == "1AbCdEf-some-id_no-dot"
+
+
+def test_resolve_drive_file_id_resolves_a_name_via_search(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_drive_search(monkeypatch, [{"id": "real-id-123", "name": "APM_Invoice_Details.xlsx"}])
+
+    assert resolve_drive_file_id(_settings(), "APM_Invoice_Details.xlsx") == "real-id-123"
+
+
+def test_resolve_drive_file_id_raises_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_drive_search(monkeypatch, [])
+
+    with pytest.raises(ValueError, match="No Drive file named"):
+        resolve_drive_file_id(_settings(), "Nonexistent.xlsx")
+
+
+def test_resolve_drive_file_id_raises_when_ambiguous(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_drive_search(
+        monkeypatch,
+        [{"id": "id-1", "name": "Dup.xlsx"}, {"id": "id-2", "name": "Dup.xlsx"}],
+    )
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        resolve_drive_file_id(_settings(), "Dup.xlsx")
+
+
+def test_build_configured_excel_tool_resolves_a_drive_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The exact bug this was all fixed for: APM_EXCEL_DRIVE_FILE_ID set
+    to a file *name* must resolve to a real id before reaching
+    build_gdrive_excel_tool, not be sent to Drive as a literal file id.
+    """
+    store = StateStore(tmp_path / "state.json")
+    _patch_drive_search(monkeypatch, [{"id": "real-id-123", "name": "APM_Invoice_Details.xlsx"}])
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        excel_file_tool_module,
+        "build_gdrive_excel_tool",
+        lambda state, settings, file_id: calls.append(file_id) or "fake-tool",
+    )
+
+    result = build_configured_excel_tool(store, _settings(excel_drive_file_id="APM_Invoice_Details.xlsx"))
+
+    assert result == "fake-tool"
+    assert calls == ["real-id-123"]

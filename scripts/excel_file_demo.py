@@ -21,8 +21,9 @@ Google Drive usage:
   # "APM_Invoice_Details.xlsx") -- a name is resolved to an id via a
   # Drive search first. First run opens a browser consent screen and
   # caches a token locally (.google_drive_token.json, gitignored). If
-  # more than one file shares that name, the first match wins -- use
-  # --list or the file id to be unambiguous.
+  # zero or more than one file shares that name, this exits with an
+  # error instead of guessing -- use --list or the file id to be
+  # unambiguous.
   python scripts/excel_file_demo.py gdrive --list
   python scripts/excel_file_demo.py gdrive <file_id_or_name> [sheet_name] [range_address]
 
@@ -41,6 +42,7 @@ from apm.tools.excel_file_tool import (
     GOOGLE_DRIVE_SCOPE,
     build_gdrive_excel_tool,
     build_local_excel_tool,
+    resolve_drive_file_id as _resolve_drive_file_id,
 )
 
 
@@ -62,31 +64,18 @@ def list_drive_files() -> None:
 
 
 def resolve_drive_file_id(file_id_or_name: str) -> str:
-    """`file_id_or_name` can be a literal Drive file id, or a file name
-    (e.g. "APM_Invoice_Details.xlsx") to look up. A bare id has no dot
-    in it; a name does (its extension) -- that's the only signal we
-    have to tell them apart without an extra flag, so this treats
-    anything with a "." as a name to search for.
+    """Thin CLI wrapper over apm.tools.excel_file_tool.resolve_drive_file_id
+    (shared with build_configured_excel_tool, so the API/UI resolves a
+    configured name the same way this script does) -- converts its
+    ValueError (no match, or more than one) into a clean SystemExit
+    message instead of a raw traceback.
     """
-    if "." not in file_id_or_name:
-        return file_id_or_name
-
-    escaped_name = file_id_or_name.replace("'", "\\'")
-    response = (
-        _drive_service()
-        .files()
-        .list(q=f"name = '{escaped_name}' and trashed = false", fields="files(id, name)")
-        .execute()
-    )
-    matches = response.get("files", [])
-    if not matches:
+    try:
+        return _resolve_drive_file_id(load_settings(), file_id_or_name)
+    except ValueError as exc:
         raise SystemExit(
-            f"No Drive file named {file_id_or_name!r} found (or it's trashed). "
-            "Run `python scripts/excel_file_demo.py gdrive --list` to see what's available."
-        )
-    if len(matches) > 1:
-        print(f"{len(matches)} files named {file_id_or_name!r} found -- using the first: {matches[0]['id']}")
-    return matches[0]["id"]
+            f"{exc} Run `python scripts/excel_file_demo.py gdrive --list` to see what's available."
+        ) from None
 
 
 def build_tool(mode: str, file_id_or_name: str):
