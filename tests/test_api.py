@@ -17,9 +17,11 @@ from apm.api.app import create_app
 from apm.api.dependencies import get_graph, get_intent_parser, get_state_store
 from apm.state.store import StateStore
 from apm.tools.calendar_tool import CalendarTool
+from apm.tools.excel_file_tool import ExcelFileTool
 from apm.tools.gmail_tool import GmailTool
 from tests.test_agent_graph import FakeReasoner
 from tests.test_calendar_tool import FakeCalendarClient
+from tests.test_excel_file_tool import FakeWorkbookSource, _sample_workbook_bytes
 from tests.test_gmail_tool import FakeGmailClient
 
 
@@ -40,7 +42,9 @@ class FakeIntentParser:
         return self._result
 
 
-def _client(tmp_path: Path, reasoning_result: ReasoningResult, intent_parser: Any = None):
+def _client(
+    tmp_path: Path, reasoning_result: ReasoningResult, intent_parser: Any = None, with_excel: bool = False
+):
     store = StateStore(tmp_path / "state.json")
     gmail_client = FakeGmailClient([])
     calendar_client = FakeCalendarClient([])
@@ -48,6 +52,10 @@ def _client(tmp_path: Path, reasoning_result: ReasoningResult, intent_parser: An
         "gmail": GmailTool(store, gmail_client),
         "google_calendar": CalendarTool(store, calendar_client),
     }
+    excel_source = None
+    if with_excel:
+        excel_source = FakeWorkbookSource(_sample_workbook_bytes())
+        tools["excel_file"] = ExcelFileTool(store, excel_source)
     graph = build_graph(tools, FakeReasoner(reasoning_result), store, checkpointer=MemorySaver())
 
     app = create_app()
@@ -55,7 +63,7 @@ def _client(tmp_path: Path, reasoning_result: ReasoningResult, intent_parser: An
     app.dependency_overrides[get_state_store] = lambda: store
     if intent_parser is not None:
         app.dependency_overrides[get_intent_parser] = lambda: intent_parser
-    return TestClient(app), store, gmail_client, calendar_client
+    return TestClient(app), store, gmail_client, calendar_client, excel_source
 
 
 def test_health() -> None:
@@ -72,7 +80,7 @@ def test_start_process_requires_a_query(tmp_path: Path) -> None:
 
 
 def test_start_process_with_no_proposed_action(tmp_path: Path) -> None:
-    client, store, gmail_client, _ = _client(
+    client, store, gmail_client, _, _ = _client(
         tmp_path, ReasoningResult(summary="Everything is on track.", proposed_action=None)
     )
 
@@ -93,7 +101,7 @@ def test_full_approval_flow_through_the_api(tmp_path: Path) -> None:
         description="Send a follow-up email about the delay",
         payload={"to": "customer@realcorp.io", "subject": "Update", "body": "Your order is delayed."},
     )
-    client, store, gmail_client, _ = _client(
+    client, store, gmail_client, _, _ = _client(
         tmp_path, ReasoningResult(summary="There is a delay.", proposed_action=proposed)
     )
 
@@ -123,7 +131,7 @@ def test_rejection_through_the_api_does_not_execute(tmp_path: Path) -> None:
         description="Create a renewal reminder",
         payload={"title": "Renewal call", "start": "2026-09-10T15:00:00Z", "end": "2026-09-10T15:30:00Z"},
     )
-    client, store, _, calendar_client = _client(
+    client, store, _, calendar_client, _ = _client(
         tmp_path, ReasoningResult(summary="Renewal is coming up.", proposed_action=proposed)
     )
 
@@ -196,7 +204,7 @@ def test_start_returns_clean_502_on_upstream_failure(tmp_path: Path) -> None:
 
 def test_query_resolves_intent_and_runs_the_graph(tmp_path: Path) -> None:
     intent_parser = FakeIntentParser(ParsedIntent(process_id="order-4521", gmail_query="order 4521"))
-    client, store, gmail_client, _ = _client(
+    client, store, gmail_client, _, _ = _client(
         tmp_path,
         ReasoningResult(summary="Order 4521 is on track.", proposed_action=None),
         intent_parser=intent_parser,
@@ -240,3 +248,54 @@ def test_query_returns_clean_502_on_intent_parsing_failure(tmp_path: Path) -> No
 
     assert response.status_code == 502
     assert "intent parsing failed" in response.json()["detail"].lower()
+
+
+def test_query_with_excel_query_fetches_the_configured_workbook(tmp_path: Path) -> None:
+    intent_parser = FakeIntentParser(
+        ParsedIntent(process_id="acme-invoices", gmail_query=None, calendar_query=None, excel_query=True)
+    )
+    client, store, *_ = _client(
+        tmp_path,
+        ReasoningResult(summary="Acme's invoice tracker looks current.", proposed_action=None),
+        intent_parser=intent_parser,
+        with_excel=True,
+    )
+
+    response = client.post("/query", json={"text": "check the Acme invoice tracker"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["process_id"] == "acme-invoices"
+    status = store.get_status("acme-invoices")
+    assert "excel_file" in status["fetched"]
+    # Defaults to the first worksheet's whole used range -- the intent
+    # parser has no visibility into the workbook's actual layout.
+    assert status["fetched"]["excel_file"]["sheet_name"] == "Renewals"
+    assert status["fetched"]["excel_file"]["values"] == [
+        ["Customer", "RenewalDate"],
+        ["Acme Corp", "2026-10-01"],
+    ]
+
+
+def test_query_excel_query_true_without_a_configured_workbook_is_a_harmless_noop(tmp_path: Path) -> None:
+    """excel_query=True is only a signal to look at the workbook if one
+    is configured (apm.api.dependencies.get_graph) -- on a deployment
+    with none, fetch_node's "excel_file" in tools guard just skips it,
+    same as any other tool nobody wired up.
+    """
+    intent_parser = FakeIntentParser(
+        ParsedIntent(process_id="acme-invoices", gmail_query=None, calendar_query=None, excel_query=True)
+    )
+    client, store, *_ = _client(
+        tmp_path,
+        ReasoningResult(summary="Nothing fetched, nothing to report.", proposed_action=None),
+        intent_parser=intent_parser,
+        with_excel=False,
+    )
+
+    response = client.post("/query", json={"text": "check the Acme invoice tracker"})
+
+    assert response.status_code == 200
+    assert response.json()["summary"] == "Nothing fetched, nothing to report."
+    status = store.get_status("acme-invoices")
+    assert status["fetched"] == {}

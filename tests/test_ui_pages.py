@@ -31,10 +31,12 @@ from apm.api.app import create_app
 from apm.api.dependencies import get_graph, get_intent_parser, get_state_store
 from apm.state.store import StateStore
 from apm.tools.calendar_tool import CalendarTool
+from apm.tools.excel_file_tool import ExcelFileTool
 from apm.tools.gmail_tool import GmailTool
 from tests.test_agent_graph import FakeReasoner
 from tests.test_api import FakeIntentParser
 from tests.test_calendar_tool import FakeCalendarClient
+from tests.test_excel_file_tool import FakeWorkbookSource, _sample_workbook_bytes
 from tests.test_gmail_tool import FakeGmailClient
 
 
@@ -51,9 +53,11 @@ def patched_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     store = StateStore(tmp_path / "state.json")
     gmail_client = FakeGmailClient([])
     calendar_client = FakeCalendarClient([])
+    excel_source = FakeWorkbookSource(_sample_workbook_bytes())
     tools = {
         "gmail": GmailTool(store, gmail_client),
         "google_calendar": CalendarTool(store, calendar_client),
+        "excel_file": ExcelFileTool(store, excel_source),
     }
 
     def build(reasoning_result: ReasoningResult, intent: ParsedIntent) -> None:
@@ -72,7 +76,13 @@ def patched_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
         monkeypatch.setattr(httpx, "AsyncClient", _PatchedAsyncClient)
 
-    return {"build": build, "store": store, "gmail_client": gmail_client, "calendar_client": calendar_client}
+    return {
+        "build": build,
+        "store": store,
+        "gmail_client": gmail_client,
+        "calendar_client": calendar_client,
+        "excel_source": excel_source,
+    }
 
 
 async def test_home_page_loads_and_shows_api_connected(user: User, patched_backend) -> None:
@@ -151,6 +161,41 @@ async def test_calendar_rejection_flow_through_the_ui(user: User, patched_backen
 
     await user.should_see("rejected", retries=20)
     assert patched_backend["calendar_client"].inserted == []
+
+
+async def test_excel_renewal_tracker_approval_flow_through_the_ui(user: User, patched_backend) -> None:
+    """Business scenario: a free-text ask about a spreadsheet-sounding
+    topic ("check the Acme invoice tracker") resolves to an Excel read
+    (apm.agent.intent's excel_query), the reasoner proposes updating the
+    tracker, and the approval card -- unmodified UI code, since
+    format_action_details already had a write_range case -- shows it
+    with friendly Sheet/Range/Rows fields rather than a raw payload dump.
+    """
+    proposed = ProposedAction(
+        tool="excel_file",
+        method="write_range",
+        description="Mark Acme Corp's renewal as contacted in the tracker",
+        payload={"sheet_name": "Renewals", "address": "B2", "values": [["Contacted"]]},
+    )
+    patched_backend["build"](
+        ReasoningResult(
+            summary="Acme Corp's renewal is due soon.", proposed_action=proposed, category="renewal_reminder"
+        ),
+        ParsedIntent(process_id="acme-invoices", gmail_query=None, calendar_query=None, excel_query=True),
+    )
+
+    await user.open("/")
+    user.find(kind=ui.input).type("check the Acme invoice tracker")
+    user.find(kind=ui.button, content="Ask").click()
+
+    await user.should_see("Approval needed", retries=20)
+    await user.should_see("Renewal Reminder")  # category badge
+    await user.should_see("Renewals")  # friendly Sheet field, not a raw dict dump
+
+    user.find("Approve").click()
+
+    await user.should_see("Done:", retries=20)
+    assert patched_backend["excel_source"].write_count == 1
 
 
 async def test_orders_list_shows_created_order_with_status_and_category(user: User, patched_backend) -> None:

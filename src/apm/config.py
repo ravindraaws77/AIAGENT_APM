@@ -33,6 +33,8 @@ class Settings:
     ms_graph_client_id: str | None
     ms_graph_client_secret: str | None
     ms_graph_tenant_id: str | None
+    excel_workbook_path: str | None
+    excel_drive_file_id: str | None
     state_dir: Path
 
 
@@ -45,5 +47,7 @@ def load_settings() -> Settings:
         ms_graph_client_id=os.environ.get("MS_GRAPH_CLIENT_ID"),
         ms_graph_client_secret=os.environ.get("MS_GRAPH_CLIENT_SECRET"),
         ms_graph_tenant_id=os.environ.get("MS_GRAPH_TENANT_ID"),
+        excel_workbook_path=os.environ.get("APM_EXCEL_WORKBOOK_PATH"),
+        excel_drive_file_id=os.environ.get("APM_EXCEL_DRIVE_FILE_ID"),
         state_dir=STATE_DIR,
     )
