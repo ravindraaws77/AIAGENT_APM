@@ -14,8 +14,10 @@ from apm.agent.graph import build_graph, resume_process, start_process
 from apm.agent.reasoner import ProposedAction, ReasoningResult
 from apm.state.store import StateStore
 from apm.tools.calendar_tool import CalendarTool
+from apm.tools.excel_file_tool import ExcelFileTool
 from apm.tools.gmail_tool import GmailTool
 from tests.test_calendar_tool import FakeCalendarClient
+from tests.test_excel_file_tool import FakeWorkbookSource, _sample_workbook_bytes
 from tests.test_gmail_tool import FakeGmailClient
 
 
@@ -43,6 +45,25 @@ def _build(tmp_path: Path, reasoning_result: ReasoningResult):
     reasoner = FakeReasoner(reasoning_result)
     graph = build_graph(tools, reasoner, store, checkpointer=MemorySaver())
     return graph, store, gmail_client, calendar_client
+
+
+def _build_with_excel(tmp_path: Path, reasoning_result: ReasoningResult):
+    """Same as _build, plus an excel_file tool bound to a fake workbook
+    source — for business scenarios that read from or write to a
+    spreadsheet (e.g. a renewals/orders tracker) as part of the flow.
+    """
+    store = StateStore(tmp_path / "state.json")
+    gmail_client = FakeGmailClient([])
+    gmail_tool = GmailTool(store, gmail_client)
+    calendar_client = FakeCalendarClient([])
+    calendar_tool = CalendarTool(store, calendar_client)
+    excel_source = FakeWorkbookSource(_sample_workbook_bytes())
+    excel_tool = ExcelFileTool(store, excel_source)
+
+    tools = {"gmail": gmail_tool, "google_calendar": calendar_tool, "excel_file": excel_tool}
+    reasoner = FakeReasoner(reasoning_result)
+    graph = build_graph(tools, reasoner, store, checkpointer=MemorySaver())
+    return graph, store, gmail_client, calendar_client, excel_source
 
 
 def test_no_proposed_action_runs_straight_through(tmp_path: Path) -> None:
@@ -153,6 +174,93 @@ def test_category_flows_through_to_pending_action_and_status(tmp_path: Path) -> 
     assert outcome.pending_action["category"] == "shipment_delay"
     assert store.get_status("order-1")["category"] == "shipment_delay"
     assert store.list_pending_actions("order-1")[0]["category"] == "shipment_delay"
+
+
+def test_business_scenario_renewal_tracker_read_feeds_status(tmp_path: Path) -> None:
+    """A real business flow this connector exists for: the agent reads a
+    renewals tracker worksheet as part of deciding what to do next. The
+    fetched range should show up in persisted status the same way a
+    Gmail search or Calendar search does.
+    """
+    graph, store, _, _, _ = _build_with_excel(
+        tmp_path, ReasoningResult(summary="Acme Corp's renewal is due soon.", proposed_action=None)
+    )
+
+    outcome = start_process(
+        graph, "renewal-acme", queries={"excel_file": {"sheet_name": "Renewals", "address": "A1:B2"}}
+    )
+
+    assert outcome.summary == "Acme Corp's renewal is due soon."
+    status = store.get_status("renewal-acme")
+    assert status["fetched"]["excel_file"]["values"] == [
+        ["Customer", "RenewalDate"],
+        ["Acme Corp", "2026-10-01"],
+    ]
+
+
+def test_business_scenario_renewal_tracker_update_approved(tmp_path: Path) -> None:
+    """Business scenario: after spotting Acme Corp's upcoming renewal in
+    the tracker, the agent proposes logging that it's been handled by
+    updating the row — a human approves, and the sheet is actually
+    updated (mirrors the Gmail send_email/Calendar create_event approval
+    tests above, for the Excel connector).
+    """
+    proposed = ProposedAction(
+        tool="excel_file",
+        method="write_range",
+        description="Mark Acme Corp's renewal as contacted in the tracker",
+        payload={"sheet_name": "Renewals", "address": "B2", "values": [["Contacted 2026-09-03"]]},
+    )
+    graph, store, _, _, excel_source = _build_with_excel(
+        tmp_path,
+        ReasoningResult(
+            summary="Acme Corp's renewal is due soon; logging outreach.",
+            proposed_action=proposed,
+            category="renewal_reminder",
+        ),
+    )
+
+    start_process(graph, "renewal-acme", queries={"excel_file": {"sheet_name": "Renewals", "address": "A1:B2"}})
+    outcome = resume_process(graph, "renewal-acme", approved=True)
+
+    assert outcome.final_result["executed"] is True
+    assert excel_source.write_count == 1
+
+    tool = ExcelFileTool(store, excel_source)
+    reread = tool.read_range("renewal-acme", sheet_name="Renewals", address="B2")
+    assert reread.values == [["Contacted 2026-09-03"]]
+
+    events = store.list_events("renewal-acme")
+    assert any(e["event_type"] == "action_executed" and e["tool"] == "excel_file" for e in events)
+
+    status = store.get_status("renewal-acme")
+    assert status["category"] == "renewal_reminder"
+
+
+def test_business_scenario_renewal_tracker_update_rejected(tmp_path: Path) -> None:
+    """Same scenario, but the human rejects the proposed tracker update —
+    nothing should be written to the workbook.
+    """
+    proposed = ProposedAction(
+        tool="excel_file",
+        method="write_range",
+        description="Mark Acme Corp's renewal as contacted in the tracker",
+        payload={"sheet_name": "Renewals", "address": "B2", "values": [["Contacted 2026-09-03"]]},
+    )
+    graph, store, _, _, excel_source = _build_with_excel(
+        tmp_path,
+        ReasoningResult(summary="Acme Corp's renewal is due soon.", proposed_action=proposed, category="renewal_reminder"),
+    )
+
+    start_process(graph, "renewal-acme", queries={"excel_file": {"sheet_name": "Renewals", "address": "A1:B2"}})
+    outcome = resume_process(graph, "renewal-acme", approved=False)
+
+    assert outcome.final_result == {"executed": False, "reason": "rejected"}
+    assert excel_source.write_count == 0
+
+    events = store.list_events("renewal-acme")
+    assert any(e["event_type"] == "action_rejected" for e in events)
+    assert not any(e["event_type"] == "action_executed" for e in events)
 
 
 def test_fetch_node_calls_configured_tools_and_persists_status(tmp_path: Path) -> None:

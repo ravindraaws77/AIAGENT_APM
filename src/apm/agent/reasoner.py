@@ -20,7 +20,7 @@ DEFAULT_MODEL = "claude-sonnet-5"
 
 @dataclass(frozen=True)
 class ProposedAction:
-    tool: str  # "gmail" | "google_calendar" | "ms_excel"
+    tool: str  # "gmail" | "google_calendar" | "ms_excel" | "excel_file"
     method: str  # e.g. "send_email", "create_event", "write_range"
     description: str
     payload: dict[str, Any]

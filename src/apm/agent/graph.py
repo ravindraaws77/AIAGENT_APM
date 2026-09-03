@@ -63,9 +63,10 @@ def _config(process_id: str) -> dict[str, Any]:
 
 
 def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: StateStore, checkpointer: Any):
-    """`tools` keys are tool names ("gmail", "google_calendar", "ms_excel");
-    any subset may be provided — the fetch node only calls a tool that's
-    both present in `tools` and asked for in a run's `queries`.
+    """`tools` keys are tool names ("gmail", "google_calendar", "ms_excel",
+    "excel_file"); any subset may be provided — the fetch node only calls
+    a tool that's both present in `tools` and asked for in a run's
+    `queries`.
 
     `checkpointer` is required explicitly (rather than defaulting to
     MemorySaver inside this function) so callers decide the persistence
@@ -91,6 +92,10 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
         if "ms_excel" in tools and "ms_excel" in queries:
             range_data = tools["ms_excel"].read_range(process_id, **queries["ms_excel"])
             fetched["ms_excel"] = range_data.__dict__
+
+        if "excel_file" in tools and "excel_file" in queries:
+            range_data = tools["excel_file"].read_range(process_id, **queries["excel_file"])
+            fetched["excel_file"] = range_data.__dict__
 
         state_store.set_status(process_id, stage="fetched", fetched=fetched)
         return {"fetched": fetched}
