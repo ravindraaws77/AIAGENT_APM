@@ -1,4 +1,18 @@
-from apm.agent.reasoner import parse_reasoning_response
+from apm.agent.reasoner import SYSTEM_PROMPT, parse_reasoning_response
+
+
+def test_system_prompt_lists_excel_file_as_a_proposable_tool() -> None:
+    """Regression guard for a real bug: SYSTEM_PROMPT's tool enum only
+    listed "ms_excel" even after "excel_file" (src/apm/tools/excel_file_tool.py)
+    became the one actually wired into apm.api.dependencies.get_graph --
+    meaning the reasoner could never legally propose a write_range action
+    against it. Caught by a real user request ("update order 223's status
+    to Paid") that had nowhere to go. A plain string check because the
+    thing that broke was the literal prompt text sent to Claude, not any
+    parsing/validation code (parse_reasoning_response doesn't constrain
+    "tool" at all -- see test_parse_response_with_excel_file_proposed_action).
+    """
+    assert '"excel_file"' in SYSTEM_PROMPT
 
 
 def test_parse_response_with_no_action() -> None:
@@ -39,6 +53,26 @@ def test_parse_response_with_proposed_action() -> None:
     assert result.proposed_action.tool == "gmail"
     assert result.proposed_action.method == "send_email"
     assert result.proposed_action.payload["to"] == "customer@example.com"
+
+
+def test_parse_response_with_excel_file_proposed_action() -> None:
+    text = """
+    {
+      "summary": "Acme Corp's order is unpaid.",
+      "proposed_action": {
+        "tool": "excel_file",
+        "method": "write_range",
+        "description": "Mark order 223 as Paid in the tracker",
+        "payload": {"sheet_name": "Orders", "address": "C5", "values": [["Paid"]]}
+      }
+    }
+    """
+
+    result = parse_reasoning_response(text)
+
+    assert result.proposed_action.tool == "excel_file"
+    assert result.proposed_action.method == "write_range"
+    assert result.proposed_action.payload["address"] == "C5"
 
 
 def test_parse_response_wrapped_in_markdown_code_fence() -> None:

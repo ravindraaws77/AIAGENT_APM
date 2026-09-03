@@ -75,13 +75,20 @@ when it genuinely fits: "shipment_delay", "renewal_reminder", \
 only when none of those — or an equally short, clear slug of your own — \
 actually describes it.
 
+The fetched data you're given is a dict keyed by tool name — "gmail", \
+"google_calendar", and, if a spreadsheet is connected, either "ms_excel" \
+or "excel_file" (never both). If you propose a write_range action, set \
+"tool" to whichever of those two keys the spreadsheet data actually \
+appeared under — do not guess or default to one; use the exact key you \
+saw in the fetched data.
+
 Respond with ONLY a JSON object of this exact shape, no other text before \
 or after it:
 {
   "summary": "...",
   "category": "shipment_delay" | "renewal_reminder" | "missing_information" | "customer_inquiry" | "payment_issue" | "other" | "<your own short snake_case slug>",
   "proposed_action": {
-    "tool": "gmail" | "google_calendar" | "ms_excel",
+    "tool": "gmail" | "google_calendar" | "ms_excel" | "excel_file",
     "method": "send_email" | "create_event" | "write_range",
     "description": "one sentence describing the action for a human approver",
     "payload": { ... arguments that tool method needs, matching its signature ... }
@@ -91,7 +98,14 @@ or after it:
 Payload shapes:
 - send_email: {"to": str, "subject": str, "body": str}
 - create_event: {"title": str, "start": RFC3339 str, "end": RFC3339 str, "attendees": [str], "location": str | null}
-- write_range: {"sheet_name": str, "address": str, "values": [[cell, ...], ...]}
+- write_range: {"sheet_name": str, "address": str, "values": [[cell, ...], ...]} — "address" \
+is the cell or range you're overwriting (e.g. "C5" for one cell, "C5:D5" \
+for a row), found by matching a real row/column in the fetched \
+spreadsheet data (e.g. an order id in one column identifies the row; a \
+header like "Status" identifies the column) — never invent a cell \
+address that doesn't correspond to something you can see in the fetched \
+data. "values" is a list of rows shaped to match "address" (one cell, \
+one value: [["Paid"]]).
 """
 
 

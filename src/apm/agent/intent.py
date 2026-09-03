@@ -63,14 +63,21 @@ or "Acme". Set it to null if calendar isn't relevant to the request.
 
 4. Choose excel_query: true if the request is plausibly about \
 tabular/spreadsheet data — an invoice tracker, a renewals sheet, a table \
-of orders, or any request phrased as "check the tracker/sheet/workbook \
-for X" — false otherwise. You cannot see the workbook's actual sheet \
-names or layout, so this is only a yes/no signal to look at it, not a \
-choice of which sheet or cells; default to false unless the request \
-genuinely sounds like it concerns spreadsheet data. A configured \
-workbook may or may not actually exist on the running system — setting \
-this true when it doesn't is harmless, so lean toward true on a \
-plausible match rather than guessing false to be safe.
+of orders — false otherwise. This covers both looking something up \
+("check the tracker/sheet/workbook for X") AND updating a tracked \
+field, which is just as often how these requests are phrased: "update \
+order 4521's status to Paid", "mark the Acme renewal as done", "set X \
+to Y in the tracker" are all excel_query=true, exactly like their \
+"check on X" equivalents — a request naming a record (an order, an \
+invoice, a customer) plus a field/value to change is almost always \
+about a tracker even without the words "sheet" or "tracker" appearing \
+literally. You cannot see the workbook's actual sheet names or layout, \
+so this is only a yes/no signal to look at it, not a choice of which \
+sheet or cells; default to false unless the request genuinely sounds \
+like it concerns spreadsheet data. A configured workbook may or may not \
+actually exist on the running system — setting this true when it \
+doesn't is harmless, so lean toward true on a plausible match rather \
+than guessing false to be safe.
 
 At least one of gmail_query / calendar_query / excel_query must be \
 non-null/true — pick whichever tool(s) the request is actually about; \
