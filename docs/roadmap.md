@@ -25,6 +25,8 @@ current one is approved.
 
 **`reset-demo-data` skill (not a numbered phase, its own PR):** `scripts/reset_demo_data.py` + `.claude/skills/reset-demo-data/SKILL.md` — clears local `state/` (and, opt-in, cached OAuth tokens) so demo runs start from a clean slate, and prints the exact manual cleanup steps for the real Gmail/Calendar seed data (no delete capability exists on the tool connectors — see `docs/capability-map.md` — so that part is deliberately manual, not automated).
 
+**Excel files: local + Google Drive connector (not a numbered phase, its own PR):** `src/apm/tools/excel_file_tool.py` — a second Excel connector alongside the phase 4 Microsoft Graph one, for workbooks that are plain `.xlsx` files rather than something already on OneDrive/SharePoint: a `WorkbookSource` abstraction (`LocalWorkbookSource` for a path on disk, `GoogleDriveWorkbookSource` for a file id, downloaded/uploaded via the Drive v3 API and reusing the Gmail/Calendar Google OAuth client with its own token cache) supplies whole-workbook bytes, parsed/edited with `openpyxl`. Same read-then-dry-run-gated-write shape as every other connector — list worksheets, read a range, and `write_range` (not yet wired into the agent graph, same status as MS Excel's `write_range`). `scripts/excel_file_demo.py` is the manual smoke test; `tests/test_excel_file_tool.py` is fully unit-tested with a fake in-memory source, no credentials needed even for the Drive path's logic. See `docs/capability-map.md` for the full writeup, including the local-vs-Drive scope and known gaps (Drive mode only handles an uploaded `.xlsx`, not a native Google Sheet).
+
 ## Beyond phase 7b (not started — future phases, for discussion)
 
 - Voice/avatar layer (LiveKit) — Layers 1–2 of the master architecture
