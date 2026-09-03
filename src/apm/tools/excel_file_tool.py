@@ -304,6 +304,51 @@ def build_gdrive_excel_tool(
     return ExcelFileTool(state, GoogleDriveWorkbookSource(credentials, file_id))
 
 
+def resolve_drive_file_id(
+    settings: Settings, file_id_or_name: str, token_path: Path = DEFAULT_DRIVE_TOKEN_PATH
+) -> str:
+    """Accept either a literal Drive file id or a file name (e.g.
+    "APM_Invoice_Details.xlsx") to look up. A bare id has no "." in it;
+    a name does (its extension) -- that's the only signal available to
+    tell them apart without an extra flag, so anything containing "." is
+    treated as a name and resolved via a Drive search.
+
+    Shared by build_configured_excel_tool (below) and
+    scripts/excel_file_demo.py, which used to each carry their own copy
+    of this -- found the hard way, running the wired-up API/UI (PR #23)
+    with a file *name* in APM_EXCEL_DRIVE_FILE_ID: the server-side path
+    had no resolution step and sent the literal name to Drive as a file
+    id, which predictably 404'd ("File not found: <name>.xlsx").
+
+    Raises ValueError if no file has that name, or if more than one
+    does -- unlike a one-off CLI run, a wrong silent guess here would
+    quietly bind every future request on a running server to the wrong
+    workbook, so this never guesses.
+    """
+    if "." not in file_id_or_name:
+        return file_id_or_name
+
+    from googleapiclient.discovery import build
+
+    from apm.tools.google_auth import load_credentials
+
+    credentials = load_credentials(settings, scopes=[GOOGLE_DRIVE_SCOPE], token_path=token_path)
+    service = build("drive", "v3", credentials=credentials)
+    escaped_name = file_id_or_name.replace("'", "\\'")
+    response = (
+        service.files().list(q=f"name = '{escaped_name}' and trashed = false", fields="files(id, name)").execute()
+    )
+    matches = response.get("files", [])
+    if not matches:
+        raise ValueError(f"No Drive file named {file_id_or_name!r} found (or it's trashed).")
+    if len(matches) > 1:
+        raise ValueError(
+            f"{len(matches)} Drive files are named {file_id_or_name!r} -- ambiguous. "
+            "Use the file id instead (see scripts/excel_file_demo.py's `gdrive --list`)."
+        )
+    return matches[0]["id"]
+
+
 def build_configured_excel_tool(state: StateStore, settings: Settings) -> ExcelFileTool | None:
     """Build the one Excel workbook the running server is configured for,
     same "the account" spirit as Gmail/Calendar's build_gmail_and_calendar_tools
@@ -311,11 +356,9 @@ def build_configured_excel_tool(state: StateStore, settings: Settings) -> ExcelF
     is chosen via env vars (see .env.example) rather than assumed:
 
     - APM_EXCEL_WORKBOOK_PATH: a local .xlsx path -> build_local_excel_tool.
-    - APM_EXCEL_DRIVE_FILE_ID: a literal Drive file id (not a name --
-      unlike scripts/excel_file_demo.py's CLI, there's no interactive
-      moment here to disambiguate multiple files sharing a name; find
-      the id with that script's `gdrive --list`) -> build_gdrive_excel_tool
-      (this one runs the Google OAuth flow, so only reachable if actually
+    - APM_EXCEL_DRIVE_FILE_ID: a Drive file id *or* file name (resolved
+      via resolve_drive_file_id, above) -> build_gdrive_excel_tool (this
+      one runs the Google OAuth flow, so only reachable if actually
       configured).
 
     Returns None if neither is set -- the API/UI then simply has no
@@ -323,6 +366,8 @@ def build_configured_excel_tool(state: StateStore, settings: Settings) -> ExcelF
     absent tool as "don't fetch/offer it" (see fetch_node/execute_node).
     Raises ValueError if both are set, rather than silently preferring
     one -- an ambiguous config is a mistake to fix, not guess through.
+    Also raises ValueError (via resolve_drive_file_id) if a configured
+    Drive name matches zero or more than one file.
     """
     if settings.excel_workbook_path and settings.excel_drive_file_id:
         raise ValueError(
@@ -332,5 +377,6 @@ def build_configured_excel_tool(state: StateStore, settings: Settings) -> ExcelF
     if settings.excel_workbook_path:
         return build_local_excel_tool(state, settings.excel_workbook_path)
     if settings.excel_drive_file_id:
-        return build_gdrive_excel_tool(state, settings, file_id=settings.excel_drive_file_id)
+        file_id = resolve_drive_file_id(settings, settings.excel_drive_file_id)
+        return build_gdrive_excel_tool(state, settings, file_id=file_id)
     return None
