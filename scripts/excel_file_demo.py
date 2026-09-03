@@ -19,13 +19,10 @@ Google Drive usage:
 
   # <file> can be either a Drive file id, or the file's name (e.g.
   # "APM_Invoice_Details.xlsx") -- a name is resolved to an id via a
-  # Drive search first. First run of each opens its own browser consent
-  # screen (name search needs a broader scope than reading/writing the
-  # one file you land on -- see DEFAULT_DRIVE_READONLY_TOKEN_PATH's
-  # docstring in excel_file_tool.py) and caches a token locally
-  # (.google_drive_token.json / .google_drive_readonly_token.json,
-  # gitignored). If more than one file shares that name, the first
-  # match wins -- use --list or the file id to be unambiguous.
+  # Drive search first. First run opens a browser consent screen and
+  # caches a token locally (.google_drive_token.json, gitignored). If
+  # more than one file shares that name, the first match wins -- use
+  # --list or the file id to be unambiguous.
   python scripts/excel_file_demo.py gdrive --list
   python scripts/excel_file_demo.py gdrive <file_id_or_name> [sheet_name] [range_address]
 
@@ -40,21 +37,19 @@ import sys
 from apm.config import load_settings
 from apm.state.store import StateStore
 from apm.tools.excel_file_tool import (
-    GOOGLE_DRIVE_READONLY_SCOPE,
+    DEFAULT_DRIVE_TOKEN_PATH,
+    GOOGLE_DRIVE_SCOPE,
     build_gdrive_excel_tool,
     build_local_excel_tool,
 )
 
 
 def _drive_service():
-    from apm.tools.excel_file_tool import DEFAULT_DRIVE_READONLY_TOKEN_PATH
     from apm.tools.google_auth import load_credentials
     from googleapiclient.discovery import build
 
     settings = load_settings()
-    credentials = load_credentials(
-        settings, scopes=[GOOGLE_DRIVE_READONLY_SCOPE], token_path=DEFAULT_DRIVE_READONLY_TOKEN_PATH
-    )
+    credentials = load_credentials(settings, scopes=[GOOGLE_DRIVE_SCOPE], token_path=DEFAULT_DRIVE_TOKEN_PATH)
     return build("drive", "v3", credentials=credentials)
 
 

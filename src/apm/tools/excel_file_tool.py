@@ -24,6 +24,21 @@ cell's last-calculated value rather than the formula text, but openpyxl
 never calculates formulas itself — a workbook that has never been opened
 in real Excel/Sheets (e.g. one created purely by openpyxl) has no cached
 value and such cells read back as None.
+
+Google Drive scope note (found by live testing, not just reasoned
+about): this originally requested the narrow `drive.file` scope for
+read/write, on the least-privilege theory that it's the smallest scope
+covering both. In practice `drive.file` only grants access to files the
+app itself created or that the user explicitly opened via a Google
+Picker with this app — neither is true for an existing file a user just
+points the connector at by id/name. Reads against such a file happened
+to succeed anyway (unclear why — possibly an inconsistency in how Drive
+enforces the scope for `alt=media` downloads specifically), but writes
+failed outright with a 403 `insufficientPermissions`
+("Request had insufficient authentication scopes"). Since there's no
+Picker flow here, GOOGLE_DRIVE_SCOPE below is the full `drive` scope
+instead — broader than ideal, but `drive.file` is not usable for this
+connector's actual use case (an existing file, not one the app created).
 """
 
 from __future__ import annotations
@@ -38,13 +53,10 @@ from apm.state.store import StateStore
 from apm.tools._retry import with_retry
 from apm.tools.base import ActionResult, BaseTool, Capability
 
-# drive.file is the narrowest scope that can both read and write a
-# specific Drive file — it's limited to files the app itself created or
-# that the user has explicitly opened/picked with this app, so it can't
-# see the rest of the user's Drive. drive.readonly is offered for a
-# read-only tool instance that should never be able to write at all.
-GOOGLE_DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
-GOOGLE_DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+# Full Drive read/write access -- see the module docstring's "Google
+# Drive scope note" for why the narrower drive.file scope doesn't work
+# here (confirmed by a live 403 on write, not just reasoned about).
+GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 
 EXCEL_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -269,16 +281,6 @@ def build_local_excel_tool(state: StateStore, path: Path | str) -> ExcelFileTool
 
 DEFAULT_DRIVE_TOKEN_PATH = Path(".google_drive_token.json")
 
-# A separate cache from DEFAULT_DRIVE_TOKEN_PATH, deliberately -- same
-# reasoning as that constant's own docstring below: scripts/excel_file_demo.py
-# uses the broader drive.readonly scope (see GOOGLE_DRIVE_READONLY_SCOPE
-# above) to search/list files by name, since drive.file can only see
-# files this app created or the user explicitly picked with it. Caching
-# that consent under the same file as the narrow drive.file token used
-# to actually read/write a bound workbook would hit the exact
-# scope-mismatch problem load_credentials warns about.
-DEFAULT_DRIVE_READONLY_TOKEN_PATH = Path(".google_drive_readonly_token.json")
-
 
 def build_gdrive_excel_tool(
     state: StateStore, settings: Settings, file_id: str, token_path: Path = DEFAULT_DRIVE_TOKEN_PATH
@@ -291,9 +293,12 @@ def build_gdrive_excel_tool(
     deliberately — see load_credentials' docstring: a cached token is
     only valid for the scopes it was consented to, so requesting the
     Drive scope alone against the Gmail/Calendar token file would
-    overwrite their cached token and break them at request time.
+    overwrite their cached token and break them at request time. Also
+    used as-is (same scope, same token file) for
+    scripts/excel_file_demo.py's --list/name-lookup helpers, which need
+    no narrower a scope than this tool already requests.
     """
     from apm.tools.google_auth import load_credentials
 
-    credentials = load_credentials(settings, scopes=[GOOGLE_DRIVE_FILE_SCOPE], token_path=token_path)
+    credentials = load_credentials(settings, scopes=[GOOGLE_DRIVE_SCOPE], token_path=token_path)
     return ExcelFileTool(state, GoogleDriveWorkbookSource(credentials, file_id))
