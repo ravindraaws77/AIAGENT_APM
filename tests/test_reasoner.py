@@ -15,6 +15,19 @@ def test_system_prompt_lists_excel_file_as_a_proposable_tool() -> None:
     assert '"excel_file"' in SYSTEM_PROMPT
 
 
+def test_system_prompt_prioritizes_an_explicit_request_over_guessing() -> None:
+    """Regression guard for the actual root cause behind the
+    "update order 223's status to Paid" symptom: even after excel_file
+    became a legal tool, ClaudeReasoner.reason() didn't accept a
+    request_text argument at all, so the reasoner never saw what the
+    user asked for -- only the fetched data -- and fell back to
+    inventing its own idea of a helpful action (a payment-follow-up
+    email) instead of doing what was actually requested. SYSTEM_PROMPT
+    must instruct it to honor an explicit request over guessing.
+    """
+    assert "Propose the action that directly fulfills it" in SYSTEM_PROMPT
+
+
 def test_parse_response_with_no_action() -> None:
     text = '{"summary": "All good.", "proposed_action": null}'
 
