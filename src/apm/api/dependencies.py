@@ -1,12 +1,12 @@
 """FastAPI dependency providers.
 
-Both are cached (built once per running process, not per-request) since
-the compiled graph's checkpointer holds the agent's paused/in-progress
-state in memory for the lifetime of the server process — a fresh graph
-per request would lose that state between the "start" and "decision"
-calls for the same process_id.
+All cached (built once per running process, not per-request) since a
+compiled graph's checkpointer holds paused/in-progress state in memory
+for the lifetime of the server process — a fresh graph per request would
+lose that state between the "start" and "decision" calls for the same
+process_id.
 
-Tests override both via `app.dependency_overrides` with a graph/store
+Tests override these via `app.dependency_overrides` with a graph/store
 built from fake tools and a fake reasoner (see tests/test_api.py) — real
 credentials are only needed to actually run the server, never to test it.
 """
@@ -17,11 +17,12 @@ from functools import lru_cache
 
 from langgraph.checkpoint.memory import MemorySaver
 
-from apm.agent.graph import build_graph
+from apm.agent.graph import build_action_graph, build_graph
 from apm.agent.intent import ClaudeIntentParser
 from apm.agent.reasoner import ClaudeReasoner
 from apm.config import load_settings
 from apm.state.store import StateStore
+from apm.tools.base import BaseTool
 from apm.tools.excel_file_tool import build_configured_excel_tool
 from apm.tools.google_auth import build_gmail_and_calendar_tools
 
@@ -32,16 +33,41 @@ def get_state_store() -> StateStore:
 
 
 @lru_cache
-def get_graph():
+def get_tools() -> dict[str, BaseTool]:
+    """The integration layer's tool connectors, shared by the reasoning
+    graph (get_graph) and the tools-only action graph (get_action_graph),
+    and by the /tools/* read routes -- one set of connectors, built once,
+    regardless of which access path a caller uses.
+    """
     settings = load_settings()
     state = get_state_store()
     gmail_tool, calendar_tool = build_gmail_and_calendar_tools(state, settings)
-    tools = {"gmail": gmail_tool, "google_calendar": calendar_tool}
+    tools: dict[str, BaseTool] = {"gmail": gmail_tool, "google_calendar": calendar_tool}
     excel_tool = build_configured_excel_tool(state, settings)
     if excel_tool is not None:
         tools["excel_file"] = excel_tool
+    return tools
+
+
+@lru_cache
+def get_graph():
+    settings = load_settings()
     reasoner = ClaudeReasoner(settings)
-    return build_graph(tools, reasoner, state, checkpointer=MemorySaver())
+    return build_graph(get_tools(), reasoner, get_state_store(), checkpointer=MemorySaver())
+
+
+@lru_cache
+def get_action_graph():
+    """The tools-only graph (propose -> approval -> execute, no fetch/
+    reason, no Anthropic dependency) that apm.api.app's /tools/* write
+    routes drive -- for an action a caller outside this repo's own
+    reasoner has already decided on. A separate MemorySaver instance
+    from get_graph's: a process id started here must be resumed here,
+    never against get_graph's graph (see build_action_graph's
+    docstring) -- keeping the checkpointers apart makes that mistake
+    fail loudly (unknown thread_id) rather than silently.
+    """
+    return build_action_graph(get_tools(), get_state_store(), checkpointer=MemorySaver())
 
 
 @lru_cache

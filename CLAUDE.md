@@ -34,7 +34,7 @@ touching a tool connector, use the `tool-integration` skill in
 ## Layout
 
 ```
-docs/            architecture, roadmap, capability map, security guardrails
+docs/            architecture, roadmap, capability map, api contract, security guardrails
 .claude/skills/  best-practice skills for this repo (e.g. adding a tool)
 src/apm/
   config.py      env/config loading
