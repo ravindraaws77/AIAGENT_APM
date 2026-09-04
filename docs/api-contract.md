@@ -56,10 +56,13 @@ locally. See `docs/running-locally.md` for how to start it (`pip install
     the server logs the full traceback.
   - `422` — the request body didn't match the schema (standard FastAPI
     validation).
-- **No auth today.** This API assumes a trusted internal caller — see
-  `docs/roadmap.md`'s "Beyond phase 7b" list; adding an API key/bearer
-  check before anything calls this over a network boundary it doesn't
-  already trust is a known, separate piece of work, not yet done.
+- **Auth.** Every `/tools/*` route requires a matching `X-API-Key`
+  header once `APM_TOOLS_API_KEY` is set on the server
+  (`apm.api.auth.require_tools_api_key`) — a mismatched or missing key
+  returns `401`. Left unset, the API stays open (no header required),
+  which is fine for local dev/tests but not once this crosses any
+  network boundary that isn't already trusted — see
+  `docs/security-guardrails.md`.
 
 ## Gmail
 

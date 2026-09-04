@@ -19,6 +19,10 @@ be reachable by an outside customer directly (see CLAUDE.md's approval
 rule and the project's own reasoning layer, wherever it's deployed) —
 just the surface an internal reasoning/voice component calls, with
 reasoning configured and deployed separately from this tools layer.
+
+Every route here (read and write alike) requires a matching X-API-Key
+header once APM_TOOLS_API_KEY is set (apm.api.auth.require_tools_api_key)
+— see docs/api-contract.md's "Auth" section.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from apm.agent.graph import resume_process, start_action
 from apm.api._responses import to_response, upstream_error
+from apm.api.auth import require_tools_api_key
 from apm.api.dependencies import get_action_graph, get_tools
 from apm.api.schemas import (
     CalendarCreateEventRequest,
@@ -43,7 +48,7 @@ from apm.api.schemas import (
 )
 from apm.tools.base import BaseTool
 
-router = APIRouter(prefix="/tools", tags=["tools"])
+router = APIRouter(prefix="/tools", tags=["tools"], dependencies=[Depends(require_tools_api_key)])
 
 
 def _tool(tools: dict[str, BaseTool], name: str) -> BaseTool:

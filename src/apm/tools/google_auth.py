@@ -102,3 +102,27 @@ def build_gmail_and_calendar_tools(
     gmail_tool = GmailTool(state, GoogleApiGmailClient(credentials))
     calendar_tool = CalendarTool(state, GoogleApiCalendarClient(credentials))
     return gmail_tool, calendar_tool
+
+
+def build_configured_gmail_and_calendar_tools(
+    state: StateStore, settings: Settings, token_path: Path = DEFAULT_TOKEN_PATH
+) -> tuple["GmailTool | None", "CalendarTool | None"]:
+    """Same "the account" spirit as
+    `apm.tools.excel_file_tool.build_configured_excel_tool`: returns
+    `(None, None)` when `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` aren't
+    set, instead of `build_gmail_and_calendar_tools`'s hard `RuntimeError`.
+
+    `apm.api.dependencies.get_tools` used to call
+    `build_gmail_and_calendar_tools` directly and unconditionally --
+    every `/tools/*` route (including an Excel-only read) crashed with
+    that RuntimeError on a server with no Google credentials configured,
+    even though `_tool()` in `apm.api.tools_routes` already has the
+    "tool not configured -> clean 503" handling Excel gets, and Gmail/
+    Calendar were meant to be optional there too. This is the fix: skip
+    building them (so they're simply absent from the tools dict, same as
+    an unconfigured Excel workbook) rather than raising before the
+    request-specific tool lookup even runs.
+    """
+    if not settings.google_client_id or not settings.google_client_secret:
+        return None, None
+    return build_gmail_and_calendar_tools(state, settings, token_path=token_path)

@@ -24,7 +24,7 @@ from apm.config import load_settings
 from apm.state.store import StateStore
 from apm.tools.base import BaseTool
 from apm.tools.excel_file_tool import build_configured_excel_tool
-from apm.tools.google_auth import build_gmail_and_calendar_tools
+from apm.tools.google_auth import build_configured_gmail_and_calendar_tools
 
 
 @lru_cache
@@ -38,11 +38,21 @@ def get_tools() -> dict[str, BaseTool]:
     graph (get_graph) and the tools-only action graph (get_action_graph),
     and by the /tools/* read routes -- one set of connectors, built once,
     regardless of which access path a caller uses.
+
+    Each tool is only added when its credentials are actually configured
+    (same "unconfigured -> absent, not a crash" rule for all three, not
+    just Excel): a server with no Google OAuth client set up still
+    serves Excel-only /tools/* traffic, and apm.api.tools_routes'
+    _tool() already 503s cleanly on whichever tool key is missing.
     """
     settings = load_settings()
     state = get_state_store()
-    gmail_tool, calendar_tool = build_gmail_and_calendar_tools(state, settings)
-    tools: dict[str, BaseTool] = {"gmail": gmail_tool, "google_calendar": calendar_tool}
+    tools: dict[str, BaseTool] = {}
+    gmail_tool, calendar_tool = build_configured_gmail_and_calendar_tools(state, settings)
+    if gmail_tool is not None:
+        tools["gmail"] = gmail_tool
+    if calendar_tool is not None:
+        tools["google_calendar"] = calendar_tool
     excel_tool = build_configured_excel_tool(state, settings)
     if excel_tool is not None:
         tools["excel_file"] = excel_tool
