@@ -75,6 +75,11 @@ Confirm the dashboard truly isn't there:
 python -c "import nicegui"    # should raise ModuleNotFoundError
 ```
 
+## Two ways to drive the API: with reasoning, or without
+
+- `/query`, `/processes/{id}/start`, `/processes/{id}/decision` — the reasoning-driven flow (`apm.agent.reasoner`'s `ClaudeReasoner` decides what to summarize/propose). Needs `ANTHROPIC_API_KEY`.
+- `/tools/*` (`apm.api.tools_routes`) — direct per-tool read/write, no reasoning involved: a caller decides exactly what to read or what write to propose. Reads (`/tools/gmail/search`, `/tools/calendar/read`, `/tools/excel/read`, ...) execute immediately; writes (`/tools/gmail/send`, `/tools/calendar/create-event`, `/tools/excel/write`) still pause for approval via `POST /tools/actions/{process_id}/decision`, same non-negotiable gate as the reasoning flow, just without `ANTHROPIC_API_KEY` anywhere in the path. This is the surface a separate reasoning/voice layer is meant to call.
+
 ## What `[integration-layer]` and `[ui]` each add
 
 | Extra | Adds | Needed for |
