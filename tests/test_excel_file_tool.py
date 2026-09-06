@@ -28,6 +28,7 @@ def _settings(*, excel_workbook_path: str | None = None, excel_drive_file_id: st
         excel_workbook_path=excel_workbook_path,
         excel_drive_file_id=excel_drive_file_id,
         state_dir=Path("state"),
+        tools_api_key=None,
     )
 
 

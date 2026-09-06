@@ -17,6 +17,12 @@ Usage (see scripts/agent_demo.py for a full example):
         ...show result.pending_action to a human, get a decision...
         result = resume_process(graph, process_id, approved=True)
     print(result.summary, result.final_result)
+
+build_action_graph/start_action is the smaller sibling of the above for
+when a reasoner outside this repo has already decided the action --
+same propose/approval/execute nodes and non-negotiable gate, just with
+no fetch/reason step and no Anthropic dependency. See apm.api.app's
+/tools/* routes.
 """
 
 from __future__ import annotations
@@ -63,20 +69,7 @@ def _config(process_id: str) -> dict[str, Any]:
     return {"configurable": {"thread_id": process_id}}
 
 
-def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: StateStore, checkpointer: Any):
-    """`tools` keys are tool names ("gmail", "google_calendar", "ms_excel",
-    "excel_file"); any subset may be provided — the fetch node only calls
-    a tool that's both present in `tools` and asked for in a run's
-    `queries`.
-
-    `checkpointer` is required explicitly (rather than defaulting to
-    MemorySaver inside this function) so callers decide the persistence
-    story: MemorySaver for a single script run or a test, a durable
-    checkpointer (e.g. SqliteSaver) for the phase-6 UI, which needs a
-    paused graph to survive between one Streamlit interaction and the
-    next.
-    """
-
+def _fetch_node(tools: dict[str, BaseTool], state_store: StateStore):
     def fetch_node(state: GraphState) -> dict[str, Any]:
         process_id = state["process_id"]
         queries = state.get("queries", {})
@@ -101,6 +94,10 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
         state_store.set_status(process_id, stage="fetched", fetched=fetched)
         return {"fetched": fetched}
 
+    return fetch_node
+
+
+def _reason_node(reasoner: Reasoner, state_store: StateStore):
     def reason_node(state: GraphState) -> dict[str, Any]:
         process_id = state["process_id"]
         result = reasoner.reason(process_id, state.get("fetched", {}), state.get("request_text"))
@@ -117,11 +114,20 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
         state_store.set_status(process_id, stage="summarized", summary=result.summary, category=result.category)
         return {"summary": result.summary, "category": result.category, "proposed_action": proposed}
 
+    return reason_node
+
+
+def _propose_node(state_store: StateStore):
     def propose_node(state: GraphState) -> dict[str, Any]:
         """Records the pending action, if any, exactly once. Deliberately
         kept separate from approval_node: this node runs to completion
         without ever calling interrupt(), so — unlike approval_node — it
         is never replayed, and add_pending_action never double-fires.
+
+        `proposed_action` may come from a reasoner (build_graph's "reason"
+        node) or be supplied directly by the caller (start_action, for
+        the tools-only graph build_action_graph builds) -- this node
+        doesn't care which; it only reads state.
         """
         process_id = state["process_id"]
         proposed = state.get("proposed_action")
@@ -137,6 +143,10 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
         )
         return {"pending_action_id": action_record["id"]}
 
+    return propose_node
+
+
+def _approval_node(state_store: StateStore):
     def approval_node(state: GraphState) -> dict[str, Any]:
         """The non-negotiable gate: execution physically cannot continue
         past interrupt() without a human decision arriving via
@@ -168,6 +178,10 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
         state_store.resolve_pending_action(action_id, approved=approved)
         return {"decision": approved}
 
+    return approval_node
+
+
+def _execute_node(tools: dict[str, BaseTool], state_store: StateStore):
     def execute_node(state: GraphState) -> dict[str, Any]:
         process_id = state["process_id"]
         proposed = state.get("proposed_action")
@@ -189,16 +203,66 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
         state_store.set_status(process_id, stage="done", result=outcome)
         return {"result": outcome}
 
+    return execute_node
+
+
+def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: StateStore, checkpointer: Any):
+    """`tools` keys are tool names ("gmail", "google_calendar", "ms_excel",
+    "excel_file"); any subset may be provided — the fetch node only calls
+    a tool that's both present in `tools` and asked for in a run's
+    `queries`.
+
+    `checkpointer` is required explicitly (rather than defaulting to
+    MemorySaver inside this function) so callers decide the persistence
+    story: MemorySaver for a single script run or a test, a durable
+    checkpointer (e.g. SqliteSaver) for the phase-6 UI, which needs a
+    paused graph to survive between one Streamlit interaction and the
+    next.
+    """
     graph = StateGraph(GraphState)
-    graph.add_node("fetch", fetch_node)
-    graph.add_node("reason", reason_node)
-    graph.add_node("propose", propose_node)
-    graph.add_node("approval", approval_node)
-    graph.add_node("execute", execute_node)
+    graph.add_node("fetch", _fetch_node(tools, state_store))
+    graph.add_node("reason", _reason_node(reasoner, state_store))
+    graph.add_node("propose", _propose_node(state_store))
+    graph.add_node("approval", _approval_node(state_store))
+    graph.add_node("execute", _execute_node(tools, state_store))
 
     graph.set_entry_point("fetch")
     graph.add_edge("fetch", "reason")
     graph.add_edge("reason", "propose")
+    graph.add_edge("propose", "approval")
+    graph.add_edge("approval", "execute")
+    graph.add_edge("execute", END)
+
+    return graph.compile(checkpointer=checkpointer)
+
+
+def build_action_graph(tools: dict[str, BaseTool], state_store: StateStore, checkpointer: Any):
+    """A smaller graph for a tool action decided by something other than
+    this repo's own reasoner -- an external reasoning/voice layer that
+    has already picked a tool + method + payload and just needs the same
+    non-negotiable human-approval gate and audit trail build_graph gives
+    the internal reasoner. No `fetch`/`reason` nodes, no Reasoner/Claude
+    dependency: `start_action` seeds `proposed_action` directly, and
+    `propose`/`approval`/`execute` are the exact same node logic
+    build_graph uses, just reused here without a reasoner in front of
+    them.
+
+    A process id started via this graph must be resumed via this same
+    graph (resume_process(action_graph, ...), not build_graph's graph) --
+    LangGraph's checkpointer replay needs the graph structure it was
+    checkpointed against. apm.api.dependencies keeps this graph's
+    checkpointer separate from build_graph's for exactly that reason;
+    apm.api.app routes tool-write decisions through a dedicated
+    /tools/actions/{process_id}/decision route rather than reusing
+    /processes/{id}/decision, so callers never have to guess which graph
+    a given process id belongs to.
+    """
+    graph = StateGraph(GraphState)
+    graph.add_node("propose", _propose_node(state_store))
+    graph.add_node("approval", _approval_node(state_store))
+    graph.add_node("execute", _execute_node(tools, state_store))
+
+    graph.set_entry_point("propose")
     graph.add_edge("propose", "approval")
     graph.add_edge("approval", "execute")
     graph.add_edge("execute", END)
@@ -222,6 +286,30 @@ def start_process(
     still works from fetched data alone when there's nothing to pass.
     """
     initial_state: GraphState = {"process_id": process_id, "queries": queries, "request_text": request_text}
+    result = graph.invoke(initial_state, config=_config(process_id))
+    return _to_outcome(process_id, result)
+
+
+def start_action(
+    graph: Any,
+    process_id: str,
+    tool: str,
+    method: str,
+    description: str,
+    payload: dict[str, Any],
+    category: str = "manual",
+) -> RunOutcome:
+    """Entry point for build_action_graph: run the propose -> approval ->
+    execute graph for a tool action a caller (an external reasoning
+    layer, a script, a test) has already decided on -- no fetch, no
+    reasoner. Always returns a paused RunOutcome (pending_action set):
+    unlike start_process, there's no "reasoner proposed nothing" case
+    here, since the caller only calls this when it does want an action
+    taken. Resume with resume_process(graph, process_id, approved=...),
+    passing this same action graph.
+    """
+    proposed_action = {"tool": tool, "method": method, "description": description, "payload": payload}
+    initial_state: GraphState = {"process_id": process_id, "proposed_action": proposed_action, "category": category}
     result = graph.invoke(initial_state, config=_config(process_id))
     return _to_outcome(process_id, result)
 

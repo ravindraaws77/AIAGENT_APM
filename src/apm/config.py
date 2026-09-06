@@ -36,6 +36,7 @@ class Settings:
     excel_workbook_path: str | None
     excel_drive_file_id: str | None
     state_dir: Path
+    tools_api_key: str | None
 
 
 def load_settings() -> Settings:
@@ -50,4 +51,5 @@ def load_settings() -> Settings:
         excel_workbook_path=os.environ.get("APM_EXCEL_WORKBOOK_PATH"),
         excel_drive_file_id=os.environ.get("APM_EXCEL_DRIVE_FILE_ID"),
         state_dir=STATE_DIR,
+        tools_api_key=os.environ.get("APM_TOOLS_API_KEY"),
     )

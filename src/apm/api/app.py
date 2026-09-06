@@ -3,23 +3,35 @@
 Run it with: uvicorn apm.api.app:app --reload --port 8000
 
 Routes never call a tool's write/action method directly or bypass the
-graph's approval interrupt — every mutation goes through /decision, which
-calls resume_process, which is the only path to execute_node.
+graph's approval interrupt — every mutation goes through a decision route
+(/processes/{id}/decision here, or /tools/actions/{id}/decision for the
+tools_routes router below), which calls resume_process, which is the
+only path to execute_node.
+
+This module owns the reasoning-driven flow (/query, /start, and their
+/decision) — apm.agent.reasoner's ClaudeReasoner decides what to
+summarize and propose. apm.api.tools_routes owns a separate, reasoning-
+free surface (/tools/*) for a caller that wants to decide that itself
+(an external reasoning/voice layer) — see docs/roadmap.md's "tools-only
+API surface" entry for why the two are kept apart.
 """
 
 from __future__ import annotations
 
 from fastapi import Depends, FastAPI, HTTPException
 
-from apm.agent.graph import RunOutcome, resume_process, start_process
+from apm.agent.graph import resume_process, start_process
 from apm.agent.intent import IntentParser
+from apm.api._responses import to_response, upstream_error
 from apm.api.dependencies import get_graph, get_intent_parser, get_state_store
 from apm.api.schemas import DecisionRequest, QueryRequest, RunOutcomeResponse, StartProcessRequest
+from apm.api.tools_routes import router as tools_router
 from apm.state.store import StateStore
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="APM Agent API")
+    app.include_router(tools_router)
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -56,8 +68,8 @@ def create_app() -> FastAPI:
         try:
             outcome = start_process(graph, process_id, queries)
         except Exception as exc:
-            raise _upstream_error(exc) from exc
-        return _to_response(outcome)
+            raise upstream_error(exc) from exc
+        return to_response(outcome)
 
     @app.post("/query", response_model=RunOutcomeResponse)
     def query(
@@ -81,22 +93,22 @@ def create_app() -> FastAPI:
         try:
             intent = intent_parser.parse(body.text, known_process_ids)
         except Exception as exc:
-            raise _upstream_error(exc) from exc
+            raise upstream_error(exc) from exc
 
         queries = _build_queries(intent.gmail_query, intent.calendar_query, excel_query=intent.excel_query)
         try:
             outcome = start_process(graph, intent.process_id, queries, request_text=body.text)
         except Exception as exc:
-            raise _upstream_error(exc) from exc
-        return _to_response(outcome)
+            raise upstream_error(exc) from exc
+        return to_response(outcome)
 
     @app.post("/processes/{process_id}/decision", response_model=RunOutcomeResponse)
     def decide(process_id: str, body: DecisionRequest, graph=Depends(get_graph)) -> RunOutcomeResponse:
         try:
             outcome = resume_process(graph, process_id, approved=body.approved)
         except Exception as exc:
-            raise _upstream_error(exc) from exc
-        return _to_response(outcome)
+            raise upstream_error(exc) from exc
+        return to_response(outcome)
 
     return app
 
@@ -120,25 +132,6 @@ def _build_queries(
         # layout, so it can only signal "look at it", not "read C2:D5".
         queries["excel_file"] = {}
     return queries
-
-
-def _upstream_error(exc: Exception) -> HTTPException:
-    """Turn an unexpected failure from the graph/a tool (a network error,
-    an exhausted retry, a reasoner parsing failure, ...) into a clean
-    502 response with a readable message, instead of letting an
-    unhandled 500 with a raw Python traceback reach the caller.
-    Uvicorn still logs the full traceback server-side either way.
-    """
-    return HTTPException(status_code=502, detail=f"Upstream tool/agent error: {exc}")
-
-
-def _to_response(outcome: RunOutcome) -> RunOutcomeResponse:
-    return RunOutcomeResponse(
-        process_id=outcome.process_id,
-        summary=outcome.summary,
-        pending_action=outcome.pending_action,
-        final_result=outcome.final_result,
-    )
 
 
 app = create_app()
