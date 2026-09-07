@@ -35,6 +35,10 @@ class Settings:
     ms_graph_tenant_id: str | None
     excel_workbook_path: str | None
     excel_drive_file_id: str | None
+    salesforce_client_id: str | None
+    salesforce_client_secret: str | None
+    salesforce_domain: str | None
+    salesforce_api_version: str | None
     state_dir: Path
     tools_api_key: str | None
 
@@ -50,6 +54,10 @@ def load_settings() -> Settings:
         ms_graph_tenant_id=os.environ.get("MS_GRAPH_TENANT_ID"),
         excel_workbook_path=os.environ.get("APM_EXCEL_WORKBOOK_PATH"),
         excel_drive_file_id=os.environ.get("APM_EXCEL_DRIVE_FILE_ID"),
+        salesforce_client_id=os.environ.get("SALESFORCE_CLIENT_ID"),
+        salesforce_client_secret=os.environ.get("SALESFORCE_CLIENT_SECRET"),
+        salesforce_domain=os.environ.get("SALESFORCE_DOMAIN"),
+        salesforce_api_version=os.environ.get("SALESFORCE_API_VERSION"),
         state_dir=STATE_DIR,
         tools_api_key=os.environ.get("APM_TOOLS_API_KEY"),
     )

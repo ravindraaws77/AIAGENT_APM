@@ -22,6 +22,10 @@ def _settings(*, google_client_id: str | None = None, google_client_secret: str 
         ms_graph_tenant_id=None,
         excel_workbook_path=None,
         excel_drive_file_id=None,
+        salesforce_client_id=None,
+        salesforce_client_secret=None,
+        salesforce_domain=None,
+        salesforce_api_version=None,
         state_dir=Path("state"),
         tools_api_key=None,
     )
