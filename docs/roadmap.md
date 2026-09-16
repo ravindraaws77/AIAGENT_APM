@@ -59,6 +59,8 @@ Separately, `apm.api.dependencies.get_tools()` called `apm.tools.google_auth.bui
 
 `tests/test_google_auth.py` covers the new factory directly (unconfigured → `(None, None)`, configured → delegates to `build_gmail_and_calendar_tools`); `tests/test_tools_auth.py` covers the HTTP surface (no key configured → unauthenticated request still works; key configured → missing/wrong `X-API-Key` 401s, correct one succeeds, applies to both a read and a gated write route).
 
+**Durable checkpointers for paused approvals (not a numbered phase, its own PR):** `apm.api.dependencies.get_graph()`/`get_action_graph()` previously used `MemorySaver`, so a process paused at the human-approval `interrupt()` — the non-negotiable gate itself — silently lost its resumability if the server process restarted before someone approved or rejected it; `StateStore`'s pending-action record would still show it as pending, but resuming it would hit an unknown `thread_id`. Both now use `langgraph.checkpoint.sqlite.SqliteSaver` instead, via a new `apm.api.dependencies._sqlite_checkpointer` helper: one sqlite file per graph (`state/checkpoints.sqlite3` for `get_graph()`, `state/action_checkpoints.sqlite3` for `get_action_graph()`), preserving the existing separate-checkpointer-per-graph split (see the `/tools/*` decision-route entry above) that makes resuming a process id against the wrong graph fail loudly instead of silently. New dependency: `langgraph-checkpoint-sqlite`.
+
 ## Beyond phase 7b (not started — future phases, for discussion)
 
 - Voice/avatar layer (LiveKit) — Layers 1–2 of the master architecture

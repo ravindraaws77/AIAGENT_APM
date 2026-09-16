@@ -212,12 +212,12 @@ def build_graph(tools: dict[str, BaseTool], reasoner: Reasoner, state_store: Sta
     a tool that's both present in `tools` and asked for in a run's
     `queries`.
 
-    `checkpointer` is required explicitly (rather than defaulting to
-    MemorySaver inside this function) so callers decide the persistence
-    story: MemorySaver for a single script run or a test, a durable
-    checkpointer (e.g. SqliteSaver) for the phase-6 UI, which needs a
-    paused graph to survive between one Streamlit interaction and the
-    next.
+    `checkpointer` is required explicitly (rather than defaulting to one
+    inside this function) so callers decide the persistence story:
+    MemorySaver for a single script run or a test, a durable checkpointer
+    (SqliteSaver -- see apm.api.dependencies) for the API server, which
+    needs a paused graph to survive between one HTTP request and the
+    next, and across a server restart.
     """
     graph = StateGraph(GraphState)
     graph.add_node("fetch", _fetch_node(tools, state_store))

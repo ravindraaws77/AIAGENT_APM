@@ -1,10 +1,12 @@
 """FastAPI dependency providers.
 
-All cached (built once per running process, not per-request) since a
-compiled graph's checkpointer holds paused/in-progress state in memory
-for the lifetime of the server process — a fresh graph per request would
-lose that state between the "start" and "decision" calls for the same
-process_id.
+All cached (built once per running process, not per-request) so a fresh
+graph per request doesn't lose paused/in-progress state between the
+"start" and "decision" calls for the same process_id. The checkpointers
+themselves are sqlite-backed (see `_sqlite_checkpointer`), so that state
+also survives a server restart -- a MemorySaver would silently drop any
+run paused at the human-approval interrupt() if the process restarted
+before it was resumed.
 
 Tests override these via `app.dependency_overrides` with a graph/store
 built from fake tools and a fake reasoner (see tests/test_api.py) — real
@@ -13,9 +15,10 @@ credentials are only needed to actually run the server, never to test it.
 
 from __future__ import annotations
 
+import sqlite3
 from functools import lru_cache
 
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from apm.agent.graph import build_action_graph, build_graph
 from apm.agent.intent import ClaudeIntentParser
@@ -25,6 +28,26 @@ from apm.state.store import StateStore
 from apm.tools.base import BaseTool
 from apm.tools.excel_file_tool import build_configured_excel_tool
 from apm.tools.google_auth import build_configured_gmail_and_calendar_tools
+
+
+def _sqlite_checkpointer(filename: str) -> SqliteSaver:
+    """A checkpointer backed by a file on disk rather than MemorySaver's
+    in-process dict, so a paused (awaiting-approval) graph run survives a
+    server restart instead of stranding that approval forever.
+
+    `check_same_thread=False` because the checkpointer is shared across
+    request threads (it's cached for the process lifetime, same as
+    MemorySaver was) — SqliteSaver serializes its own access internally.
+    `.setup()` creates the checkpoint tables on first run and is a no-op
+    once they exist, so it's safe to call on every startup.
+    """
+    settings = load_settings()
+    path = settings.state_dir / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path), check_same_thread=False)
+    saver = SqliteSaver(conn)
+    saver.setup()
+    return saver
 
 
 @lru_cache
@@ -63,7 +86,8 @@ def get_tools() -> dict[str, BaseTool]:
 def get_graph():
     settings = load_settings()
     reasoner = ClaudeReasoner(settings)
-    return build_graph(get_tools(), reasoner, get_state_store(), checkpointer=MemorySaver())
+    checkpointer = _sqlite_checkpointer("checkpoints.sqlite3")
+    return build_graph(get_tools(), reasoner, get_state_store(), checkpointer=checkpointer)
 
 
 @lru_cache
@@ -71,13 +95,15 @@ def get_action_graph():
     """The tools-only graph (propose -> approval -> execute, no fetch/
     reason, no Anthropic dependency) that apm.api.app's /tools/* write
     routes drive -- for an action a caller outside this repo's own
-    reasoner has already decided on. A separate MemorySaver instance
-    from get_graph's: a process id started here must be resumed here,
-    never against get_graph's graph (see build_action_graph's
-    docstring) -- keeping the checkpointers apart makes that mistake
-    fail loudly (unknown thread_id) rather than silently.
+    reasoner has already decided on. A separate sqlite file (and thus a
+    separate checkpointer) from get_graph's: a process id started here
+    must be resumed here, never against get_graph's graph (see
+    build_action_graph's docstring) -- keeping the checkpointers apart
+    makes that mistake fail loudly (unknown thread_id) rather than
+    silently.
     """
-    return build_action_graph(get_tools(), get_state_store(), checkpointer=MemorySaver())
+    checkpointer = _sqlite_checkpointer("action_checkpoints.sqlite3")
+    return build_action_graph(get_tools(), get_state_store(), checkpointer=checkpointer)
 
 
 @lru_cache
