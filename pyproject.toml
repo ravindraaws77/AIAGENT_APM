@@ -17,8 +17,11 @@ dependencies = [
     # MS Excel via Microsoft Graph.
     "msal>=1.28",
     "requests>=2.31",
-    # LangGraph agent + Claude reasoning.
+    # LangGraph agent + Claude reasoning. The sqlite checkpoint backend
+    # persists paused (awaiting-approval) graph runs to disk so a server
+    # restart doesn't strand an approval mid-flight.
     "langgraph>=0.2",
+    "langgraph-checkpoint-sqlite>=2.0",
     "anthropic>=0.40",
     # FastAPI backend.
     "fastapi>=0.110",
